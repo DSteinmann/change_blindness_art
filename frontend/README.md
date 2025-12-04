@@ -2,6 +2,8 @@
 
 A minimal static UI that subscribes to the backend WebSocket, mirrors patches to the opposite side of wherever the user is looking, and swaps in a new asset only when the wearer blinks.
 
+Use the sidebar controls to run the five-point calibration routine (corners + center). Each capture records the current gaze sample and solves an affine transform so the rendered cursor/patches match the corrected viewpoint. Calibration metadata lives in `localStorage` and can be reset at any time.
+
 ## Local Development
 ```bash
 cd frontend/public

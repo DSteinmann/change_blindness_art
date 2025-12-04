@@ -58,6 +58,11 @@
 3. When blink `state=closed` arrives, the UI pops the next patch, renders it at the mirrored coordinate based on the latest gaze, and POSTs `/patch/use` with the original gaze + mirrored placement.
 4. The active patch stays onscreen until the next blink, ensuring the periphery is always filled.
 
+## Calibration Layer
+- The frontend offers an optional five-point calibration overlay (corners + center) that records the incoming normalized gaze samples and solves for a 2×3 affine transform.
+- The solved transform is persisted in `localStorage`, so subsequent sessions reuse the correction unless the operator resets it.
+- Both the gaze cursor and the mirrored placement coordinates pass through this transform, ensuring peripheral swaps align with the corrected viewpoint.
+
 ## Latency Budget
 - Aria Live SDK → Relay: 15–30 ms over Wi‑Fi 6.
 - Relay processing + ZeroMQ hop: <10 ms.

@@ -12,6 +12,10 @@
       <img id="base-image" src="base_scene.svg" alt="Base scene" />
       <div id="gaze-cursor"></div>
       <img id="peripheral-patch" class="hidden" alt="Peripheral patch" />
+      <div id="calibration-layer" class="calibration-hidden">
+        <div id="calibration-target"></div>
+        <div id="calibration-instructions">Focus on the highlighted point, then capture a sample.</div>
+      </div>
     </section>
     <aside>
       <h1>Blink Opposite Patch Monitor</h1>
@@ -20,6 +24,16 @@
       <div class="stat"><span>Patch Buffer</span><span id="patch-status">loading</span></div>
       <div class="stat"><span>Gaze</span><span id="gaze-status">n/a</span></div>
       <div class="stat"><span>Mirror Target</span><span id="mirror-status">n/a</span></div>
+      <section class="calibration-panel">
+        <h2>Calibration</h2>
+        <div class="stat"><span>Status</span><span id="calibration-status">identity</span></div>
+        <div class="calibration-buttons">
+          <button type="button" id="start-calibration">Start Calibration</button>
+          <button type="button" id="capture-calibration" disabled>Capture Sample</button>
+          <button type="button" id="reset-calibration">Reset</button>
+        </div>
+        <p class="calibration-hint">Look at each highlighted point, then capture. A minimum of 3 samples is required.</p>
+      </section>
     </aside>
   </main>
   <script src="main.js" type="module"></script>

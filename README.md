@@ -47,6 +47,12 @@ End-to-end scaffold for experimenting with gaze-contingent peripheral image patc
 - The prior patch remains visible until the next blink-induced swap, ensuring there is always a peripheral stimulus on screen.
 - The sidebar surfaces the last blink state, buffer depth, current gaze, and the mirrored target so experimenters can verify stimuli and blinks in real time.
 
+### Custom Calibration Workflow
+- Open the UI (http://localhost:8080 by default), then click **Start Calibration** in the sidebar.
+- Five targets (four corners + center) will appear sequentially. Fixate on the highlighted dot and click **Capture Sample** once the gaze cursor stabilizes.
+- After the final sample, an affine transform is solved and stored in `localStorage`, correcting both the rendered gaze cursor and patch placements. The status indicator shows how many samples were used.
+- Click **Reset** at any time to drop back to the identity transform or rerun the capture to refresh the calibration.
+
 ## Run Everything with Docker
 1. Export your Aria device ID in `.env` (already seeded with a placeholder). The research kit unit on this project currently reports `ARIA_DEVICE_ID=d1bdfaf2-2dca-490f-be1b-73f792da9212`, so you can copy that value if you are using the same headset:
    ```bash
