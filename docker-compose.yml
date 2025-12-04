@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: docker/relay.Dockerfile
+    container_name: aria-relay
+    environment:
+      - ARIA_DEVICE_ID=d1bdfaf2-2dca-490f-be1b-73f792da9212
+    command: [
+      "python",
+      "aria_stream_relay.py",
+      "--mode",
+      "live",
+      "--device-id",
+      "${ARIA_DEVICE_ID}",
+      "--endpoint",
+      "tcp://0.0.0.0:5555"
+    ]
+    ports:
+      - "5555:5555"
+    networks:
+      - aria-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: aria-backend
+    depends_on:
+      - relay
+    environment:
+      - ARIA_ZMQ_ENDPOINT=tcp://aria-relay:5555
+      - PATCH_ASSETS_DIR=/app/assets/patches
+    ports:
+      - "8000:8000"
+    networks:
+      - aria-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: aria-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+    networks:
+      - aria-net
+
+networks:
+  aria-net:
+    driver: bridge

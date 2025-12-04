@@ -1,0 +1,12 @@
+[
+  {
+    "id": "magenta",
+    "url": "/assets/periphery_patch_magenta.svg",
+    "stimulus": "default"
+  },
+  {
+    "id": "cyan",
+    "url": "/assets/periphery_patch_cyan.svg",
+    "stimulus": "default"
+  }
+]

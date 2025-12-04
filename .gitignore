@@ -1,0 +1,39 @@
+# OS / editor junk
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging / build artifacts
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+hostenv/
+hostenv312/
+
+# Conda environments
+*.conda
+*.ipynb_checkpoints/
+
+# Logs / coverage
+*.log
+coverage/
+htmlcov/
+
+# Env / secrets
+.env
+.env.*
+
+# Frontend dependencies
+node_modules/

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aria Blink Patch Demo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <section class="canvas-wrapper">
+      <img id="base-image" src="base_scene.svg" alt="Base scene" />
+      <div id="gaze-cursor"></div>
+      <img id="peripheral-patch" class="hidden" alt="Peripheral patch" />
+    </section>
+    <aside>
+      <h1>Blink-Patch Monitor</h1>
+      <div class="stat"><span>WebSocket</span><span id="ws-status">disconnected</span></div>
+      <div class="stat"><span>Last Blink</span><span id="blink-status">n/a</span></div>
+      <div class="stat"><span>Patch</span><span id="patch-status">n/a</span></div>
+      <div class="stat"><span>Gaze</span><span id="gaze-status">n/a</span></div>
+    </aside>
+  </main>
+  <script src="main.js" type="module"></script>
+</body>
+</html>

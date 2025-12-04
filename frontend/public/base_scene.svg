@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#182848"/>
+      <stop offset="100%" stop-color="#4b6cb7"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <circle cx="960" cy="540" r="220" fill="#ffffff22" stroke="#ffffff55" stroke-width="6"/>
+  <text x="960" y="560" font-size="96" font-family="Helvetica, Arial, sans-serif" text-anchor="middle" fill="#ffffffaa">
+    Focus Point
+  </text>
+</svg>

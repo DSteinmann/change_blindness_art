@@ -1,0 +1,15 @@
+name: ubicomp312
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - zeromq
+  - pip:
+      - fastapi>=0.110
+      - uvicorn[standard]>=0.27
+      - pyzmq>=25.1
+      - msgpack>=1.0
+      - projectaria-tools==1.5.2a1
+      # Install the Project Aria Client SDK wheel manually after creating the env:
+      # pip install /path/to/projectaria_client_sdk-<version>-cp312-*.whl
