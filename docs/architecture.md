@@ -1,15 +1,15 @@
-# Project Aria Blink-Patch Experience
+# Project Aria Blink-Opposite Experience
 
 ## Goals
-- Stream gaze vectors and blink state from Meta Project Aria glasses to a desktop host.
-- While the user looks at a base stimulus image, swap in a peripheral patch instantly (<150 ms) whenever a blink is detected.
+- Stream gaze vectors (plus blink confidence for analytics) from Meta Project Aria or Pupil Core glasses to a desktop host.
+- While the user looks at a base stimulus image, keep a peripheral patch visible and swap it with a new asset on the *opposite* side of the screen whenever a blink is detected (<150 ms latency budget).
 - Default deployment is a desktop browser; the host backend should also drive large external displays.
 
 ## High-Level Flow
-1. **Project Aria glasses** capture gaze rays and eyelid pose via the Live Stream SDK.
-2. **Aria Stream Relay (Python)** subscribes to the glasses using `projectaria-tools` live APIs and publishes normalized gaze/blink packets over ZeroMQ.
+1. **Project Aria (or Pupil Core) glasses** capture gaze rays and eyelid pose via the live streaming SDKs.
+2. **Aria Stream Relay (Python)** subscribes to the glasses and publishes normalized gaze/blink packets over ZeroMQ.
 3. **Host Backend (FastAPI)** ingests the relay stream, persists the latest sample in shared memory, and fans out updates via WebSocket to any UI clients.
-4. **Web UI (React/Vite)** renders the base image, tracks the current gaze point, and swaps a peripheral patch the moment a blink packet arrives.
+4. **Web UI (Vanilla JS)** renders the base image, tracks the current gaze point, and mirrors patches across gaze whenever a blink occurs.
 5. **Patch Service** keeps a pre-generated queue of peripheral images (e.g., AI-generated textures). It exposes `GET /patch/next` for deterministic experiments or `GET /patch/random` for exploratory use.
 
 ```
@@ -29,6 +29,7 @@
 ### Relay → Backend (ZeroMQ JSON)
 ```json
 {
+  "event": "sample",
   "ts": 1732928451.123,
   "gaze": {
     "x_norm": 0.42,
@@ -43,9 +44,7 @@
 ```
 
 ### Backend → UI (WebSocket JSON)
-- `event: "gaze"` – high-frequency gaze updates (~120 Hz)
-- `event: "blink"` – emitted only when the relay reports `closing→closed`
-- `event: "patch"` – delivers the asset id that should be rendered next
+- Samples from the relay are forwarded verbatim, so the UI simply listens for `event: "sample"` frames that contain both gaze and blink metadata.
 
 ### REST Endpoints
 - `GET /healthz`
@@ -53,14 +52,11 @@
 - `GET /patch/next?stimulus=scene_a` – deterministic patch progression
 - `POST /patch/use` – log that the UI applied a patch (timestamp, gaze vector)
 
-## Blink-Patch Logic
-1. UI keeps rendering the current base image while listening for `blink` events.
-2. When blink `state=closed` arrives:
-   - Debounce to ensure the last blink was ≥250 ms ago.
-   - Fetch next patch id (pre-fetched whenever idle to avoid REST latency).
-   - Compute peripheral anchor point: use the latest gaze vector to determine the opposite side of the screen so the user perceives a change in the periphery.
-   - Swap assets instantly and log `PATCH_APPLIED` with timestamps (front-end sends to backend for experiment bookkeeping).
-3. When `blink` transitions back to `open`, resume watching without changing assets.
+## Blink-Opposite Logic
+1. UI maintains a small buffer of patches fetched from `GET /patch/next` so that swap latency is dominated by rendering, not REST.
+2. Every valid gaze sample updates the cursor and pre-computes the mirrored coordinate `⟨1 - x_norm, 1 - y_norm⟩`.
+3. When blink `state=closed` arrives, the UI pops the next patch, renders it at the mirrored coordinate based on the latest gaze, and POSTs `/patch/use` with the original gaze + mirrored placement.
+4. The active patch stays onscreen until the next blink, ensuring the periphery is always filled.
 
 ## Latency Budget
 - Aria Live SDK → Relay: 15–30 ms over Wi‑Fi 6.

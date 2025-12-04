@@ -1,11 +1,11 @@
-# Project Aria Blink-Patch Prototype
+# Project Aria Blink-Opposite Patch Prototype
 
-End-to-end scaffold for experimenting with gaze-contingent peripheral image patches using Meta Project Aria glasses.
+End-to-end scaffold for experimenting with gaze-contingent peripheral image patches using Meta Project Aria glasses. The UI keeps a patch visible at all times and swaps in a new asset on the *opposite* side of the screen whenever the wearer blinks.
 
 ## Repo Layout
 - `relay/` – Python publisher that bridges Project Aria gaze/blink data to ZeroMQ (simulation mode included).
 - `backend/` – FastAPI server that consumes the relay stream, manages patch assets, and exposes WebSocket + REST endpoints.
-- `frontend/` – Static dashboard showing the base stimulus, current gaze cursor, and blink-triggered patches.
+- `frontend/` – Static dashboard showing the base stimulus, current gaze cursor, and blink-triggered peripheral patches mirrored across the current gaze point.
 - `assets/patches/` – Sample SVG patches plus a manifest consumed by the backend.
 - `docs/` – Architecture notes.
 
@@ -40,6 +40,12 @@ End-to-end scaffold for experimenting with gaze-contingent peripheral image patc
 3. **Stop everything** with `Ctrl+C`. The script forwards signals and tears down relay/backend/frontend processes cleanly.
 
 > Prefer running the relay on macOS directly instead of Docker because the Linux images lack the `aria.sdk_gen2` bindings bundled with the macOS SDK.
+
+## Blink-Triggered Mirror Logic
+- The frontend maintains a rolling buffer of patches fetched from `GET /patch/next` and records every placement through `POST /patch/use` with a `blink-opposite` reason.
+- Gaze samples continually update the cursor and mirrored coordinate `⟨1 - x_norm, 1 - y_norm⟩`, but a new patch is only spawned when a blink transitions to `closed`.
+- The prior patch remains visible until the next blink-induced swap, ensuring there is always a peripheral stimulus on screen.
+- The sidebar surfaces the last blink state, buffer depth, current gaze, and the mirrored target so experimenters can verify stimuli and blinks in real time.
 
 ## Run Everything with Docker
 1. Export your Aria device ID in `.env` (already seeded with a placeholder). The research kit unit on this project currently reports `ARIA_DEVICE_ID=d1bdfaf2-2dca-490f-be1b-73f792da9212`, so you can copy that value if you are using the same headset:

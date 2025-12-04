@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logger = logging.getLogger("aria-backend")
 
 settings = get_settings()
-app = FastAPI(title="Aria Blink Patch Backend", version="0.1.0")
+app = FastAPI(title="Aria Gaze Patch Backend", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

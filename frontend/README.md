@@ -1,6 +1,6 @@
-# Blink Patch Frontend
+# Blink Mirror Frontend
 
-A minimal static UI that subscribes to the backend WebSocket and overlays peripheral patches.
+A minimal static UI that subscribes to the backend WebSocket, mirrors patches to the opposite side of wherever the user is looking, and swaps in a new asset only when the wearer blinks.
 
 ## Local Development
 ```bash
