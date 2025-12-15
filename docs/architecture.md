@@ -58,10 +58,17 @@
 3. When blink `state=closed` arrives, the UI pops the next patch, renders it at the mirrored coordinate based on the latest gaze, and POSTs `/patch/use` with the original gaze + mirrored placement.
 4. The active patch stays onscreen until the next blink, ensuring the periphery is always filled.
 
+## Blink Detection
+- The relay low-pass filters the Aria depth or Pupil confidence values and feeds them into a hysteresis state machine (`close_below` vs `open_above`).
+- A configurable hold timer (`--blink-hold-ms`, default 120 ms) prevents rapid reopen/close chatter when the signal hovers near the thresholds.
+- Separate knobs exist for each hardware path (`--aria-blink-close-depth`, `--aria-blink-open-depth`, `--pupil-blink-close-confidence`, `--pupil-blink-open-confidence`, plus EMA controls) so operators can tune for different fits or lighting conditions without touching code.
+- The UI still receives the same `"open"` / `"closed"` state transitions; the added smoothing simply reduces false positives when confidence briefly dips.
+
 ## Calibration Layer
 - The frontend offers an optional five-point calibration overlay (corners + center) that records the incoming normalized gaze samples and solves for a 2×3 affine transform.
 - The solved transform is persisted in `localStorage`, so subsequent sessions reuse the correction unless the operator resets it.
 - Both the gaze cursor and the mirrored placement coordinates pass through this transform, ensuring peripheral swaps align with the corrected viewpoint.
+- The rendering surface is now a full-canvas scene (no DOM images). Each patch id maps to a deterministic geometric primitive + color palette, keeping swaps lightweight while still logging the original patch metadata.
 
 ## Latency Budget
 - Aria Live SDK → Relay: 15–30 ms over Wi‑Fi 6.

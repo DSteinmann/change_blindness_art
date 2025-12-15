@@ -24,6 +24,25 @@ class PatchManager:
                 {"id": path.stem, "url": f"/assets/{path.name}", "stimulus": "default"}
                 for path in sorted(self.assets_root.glob("*.svg"))
             ]
+
+        # Also include any PNG files under the assets root (including subdirectories),
+        # unless they are already present in the manifest. This allows generated
+        # PNGs (e.g. under assets/patches/generated) to be rotated without
+        # manually editing manifest.json.
+        existing_urls = {item.get("url") for item in self._manifest}
+        for path in sorted(self.assets_root.rglob("*.png")):
+            rel = path.relative_to(self.assets_root).as_posix()
+            url = f"/assets/{rel}"
+            if url in existing_urls:
+                continue
+            # Treat auto-discovered PNGs (e.g. generated patches) as a
+            # separate stimulus class so the frontend can request only
+            # those without touching the SVG defaults in manifest.json.
+            self._manifest.append({
+                "id": path.stem,
+                "url": url,
+                "stimulus": "generated",
+            })
         if not self._manifest:
             raise RuntimeError(
                 "No patch assets found. Add SVG/PNG assets or a manifest.json inside ''%s''."

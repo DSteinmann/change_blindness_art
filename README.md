@@ -46,6 +46,7 @@ End-to-end scaffold for experimenting with gaze-contingent peripheral image patc
 - Gaze samples continually update the cursor and mirrored coordinate `⟨1 - x_norm, 1 - y_norm⟩`, but a new patch is only spawned when a blink transitions to `closed`.
 - The prior patch remains visible until the next blink-induced swap, ensuring there is always a peripheral stimulus on screen.
 - The sidebar surfaces the last blink state, buffer depth, current gaze, and the mirrored target so experimenters can verify stimuli and blinks in real time.
+- Instead of swapping external imagery, the canvas renderer hashes each patch id into a simple geometric primitive (circle/square/triangle/diamond) and color. The backend ordering/logging still comes from `assets/patches`, but the visual change stays lightweight for faster swaps.
 
 ### Custom Calibration Workflow
 - Open the UI (http://localhost:8080 by default), then click **Start Calibration** in the sidebar.
@@ -53,30 +54,19 @@ End-to-end scaffold for experimenting with gaze-contingent peripheral image patc
 - After the final sample, an affine transform is solved and stored in `localStorage`, correcting both the rendered gaze cursor and patch placements. The status indicator shows how many samples were used.
 - Click **Reset** at any time to drop back to the identity transform or rerun the capture to refresh the calibration.
 
-## Run Everything with Docker
-1. Export your Aria device ID in `.env` (already seeded with a placeholder). The research kit unit on this project currently reports `ARIA_DEVICE_ID=d1bdfaf2-2dca-490f-be1b-73f792da9212`, so you can copy that value if you are using the same headset:
-   ```bash
-   echo "ARIA_DEVICE_ID=d1bdfaf2-2dca-490f-be1b-73f792da9212" > .env
-   ```
-2. Build and start the stack (relay live + backend + frontend):
+## Run Everything with Docker (Pupil Core)
+1. Start Pupil Capture (or the modern Pupil Core runtime) on the host and enable the **Pupil Remote** plugin. Leave it listening on `127.0.0.1:50020`.
+2. Build and start the stack (relay in Pupil mode + backend + frontend):
    ```bash
    DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose up --build
    ```
-   - Relay boots in **live** mode on port 5555 and expects the host ARK runtime to be
-     reachable from inside the container (pass through USB/network interfaces as required by your host OS).
-   - Backend becomes available at http://localhost:8000.
+   - The `relay` service runs in **pupil** mode and connects to Pupil Remote on the host via `host.docker.internal:50020`.
+   - Backend becomes available at http://localhost:8000 and serves assets from your local `assets/` folder (mounted read-only).
    - Frontend is served via NGINX at http://localhost:8080.
-3. To use simulated data with Docker, override the relay command at launch time:
-   ```bash
-   docker compose run --rm relay python aria_stream_relay.py --mode simulate --endpoint tcp://0.0.0.0:5555
-   ```
-   (or edit `docker-compose.yml` temporarily).
-4. Stop the containers:
+3. Stop the containers:
    ```bash
    docker compose down
    ```
-5. (Optional) Switch back to playback by editing `docker-compose.yml` and changing the relay command or by
-   exporting `ARIA_RELAY_MODE=simulate` and referencing it inside the compose file.
 
 ## Moving to Real Hardware
 - Install `projectaria-tools`, the Aria Research Kit, and the macOS Project Aria Client SDK wheel in the same conda environment.

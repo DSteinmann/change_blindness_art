@@ -13,6 +13,19 @@ Key flags:
 - `--hz`: sample frequency for simulated data.
 - `--blink-interval`: seconds between synthetic blinks.
 - `--device-id`: Aria Live Stream device id (required for `live` mode once you wire the SDK).
+- `--mode pupil`: subscribe to a running Pupil Core + Remote instance.
+- Blink tuning knobs (shared by `live` + `pupil`):
+  - `--blink-hold-ms`: minimum time to keep a detected blink closed (debounces noise).
+  - `--aria-blink-close-depth` / `--aria-blink-open-depth`: hysteresis thresholds (in meters) for depth-based blinks.
+  - `--aria-depth-ema`: exponential smoothing factor for Aria depth samples.
+  - `--pupil-blink-close-confidence` / `--pupil-blink-open-confidence`: hysteresis thresholds for Pupil confidence values.
+  - `--pupil-confidence-ema`: exponential smoothing factor for Pupil confidence.
+
+Code layout highlights:
+- `aria_stream_relay.py` – CLI + simulator + mode dispatcher.
+- `aria_live_source.py` – Project Aria SDK plumbing.
+- `pupil_core_source.py` – Pupil Remote subscriber.
+- `blink_utils.py` – shared EMA/hysteresis helper.
 
 ## Wiring to Project Aria
 1. Install the Aria Research Kit and the Project Aria Client SDK (`pip install projectaria-client-sdk>=1.2`).
