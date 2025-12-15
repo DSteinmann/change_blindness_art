@@ -30,8 +30,18 @@ const CALIBRATION_POINTS = [
 const SHAPE_TYPES = ["circle", "square", "triangle", "diamond"];
 const COLOR_PALETTE = ["#ff5e5b", "#00c2ff", "#ffd166", "#06d6a0", "#c084fc", "#f28482"];
 
-// Simple in-memory cache for patch images keyed by their URL.
-const patchImageCache = new Map();
+let renderScheduled = false;
+
+function scheduleRender() {
+  if (renderScheduled) {
+    return;
+  }
+  renderScheduled = true;
+  window.requestAnimationFrame(() => {
+    renderScene();
+    renderScheduled = false;
+  });
+}
 
 function resizeCanvas() {
   const rect = canvasWrapper.getBoundingClientRect();
@@ -42,7 +52,7 @@ function resizeCanvas() {
   sceneCanvas.style.width = `${rect.width}px`;
   sceneCanvas.style.height = `${rect.height}px`;
   sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  renderScene();
+  scheduleRender();
   if (calibrationActive) {
     showCalibrationTarget(CALIBRATION_POINTS[calibrationIndex] || CALIBRATION_POINTS[0]);
   }
@@ -138,58 +148,25 @@ function drawPatchShape(entry) {
   sceneCtx.restore();
 }
 
-function getPatchImage(patch) {
-  if (!patch || !patch.url) {
-    return null;
-  }
-  const rawUrl = patch.url;
-  const url = /^https?:\/\//.test(rawUrl) ? rawUrl : `${API_ROOT}${rawUrl}`;
-  let img = patchImageCache.get(url);
-  if (!img) {
-    img = new Image();
-    img.onload = () => {
-      // Once loaded, trigger a re-render so the image appears.
-      renderScene();
-    };
-    img.onerror = (err) => {
-      console.warn("failed to load patch image", url, err);
-      patchImageCache.set(url, null);
-    };
-    img.src = url;
-    patchImageCache.set(url, img);
-  }
-  if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-    return img;
-  }
-  return null;
-}
-
 function drawPatch(entry) {
-  if (!entry) {
+  if (!entry || !entry.image) {
     return;
   }
-  const { patch } = entry;
-  const img = getPatchImage(patch);
-
-  if (img) {
-    const canvasW = canvasMetrics.width || sceneCanvas.width;
-    const canvasH = canvasMetrics.height || sceneCanvas.height;
-    if (!canvasW || !canvasH) {
-      return;
-    }
-    const iw = img.naturalWidth || 1;
-    const ih = img.naturalHeight || 1;
-    // Scale to fit entirely within the canvas while preserving aspect ratio.
-    const scale = Math.min(canvasW / iw, canvasH / ih);
-    const drawW = iw * scale;
-    const drawH = ih * scale;
-    const offsetX = (canvasW - drawW) / 2;
-    const offsetY = (canvasH - drawH) / 2;
-    sceneCtx.drawImage(img, offsetX, offsetY, drawW, drawH);
-  } else {
-    // If the image is not yet loaded, draw nothing; it will
-    // appear on the next render once the onload handler fires.
+  const { image } = entry;
+  const canvasW = canvasMetrics.width || sceneCanvas.width;
+  const canvasH = canvasMetrics.height || sceneCanvas.height;
+  if (!canvasW || !canvasH) {
+    return;
   }
+  const iw = image.naturalWidth || 1;
+  const ih = image.naturalHeight || 1;
+  // Scale to fit entirely within the canvas while preserving aspect ratio.
+  const scale = Math.min(canvasW / iw, canvasH / ih);
+  const drawW = iw * scale;
+  const drawH = ih * scale;
+  const offsetX = (canvasW - drawW) / 2;
+  const offsetY = (canvasH - drawH) / 2;
+  sceneCtx.drawImage(image, offsetX, offsetY, drawW, drawH);
 }
 
 function drawMirrorIndicator() {
@@ -315,14 +292,22 @@ function applyCalibration(gaze) {
   };
 }
 
-async function fetchPatch() {
+async function fetchAndDecodePatch() {
   // Request only generated PNG patches (stimulus="generated") so we
   // skip any legacy SVG defaults defined in manifest.json.
   const response = await fetch(`${API_ROOT}/patch/next?stimulus=generated`);
   if (!response.ok) {
     throw new Error(`patch/next failed (${response.status})`);
   }
-  return response.json();
+  const patch = await response.json();
+  if (!patch.url) {
+    throw new Error("patch has no url");
+  }
+  const url = /^https?:\/\//.test(patch.url) ? patch.url : `${API_ROOT}${patch.url}`;
+  const image = new Image();
+  image.src = url;
+  await image.decode();
+  return { ...patch, image };
 }
 
 function updatePatchStatus() {
@@ -336,16 +321,8 @@ async function ensurePatchBuffer() {
   refillPromise = (async () => {
     try {
       while (patchQueue.length < PATCH_PREFETCH) {
-        const patch = await fetchPatch();
-        // Kick off image loading as soon as we know the URL so that
-        // by the time the patch is used on a blink, the image is
-        // already decoded and swap latency is minimized.
-        try {
-          void getPatchImage(patch);
-        } catch (e) {
-          // ignore cache errors; they'll be logged in getPatchImage
-        }
-        patchQueue.push(patch);
+        const decodedPatch = await fetchAndDecodePatch();
+        patchQueue.push(decodedPatch);
         updatePatchStatus();
       }
     } catch (err) {
@@ -382,7 +359,7 @@ function updateGazeCursor(gaze) {
   latestGazeCalibrated = { ...calibrated, valid: Boolean(gaze?.valid) };
   gazeStatus.textContent = `${calibrated.x_norm.toFixed(2)}, ${calibrated.y_norm.toFixed(2)}`;
   updateMirrorPreview(calibrated);
-  renderScene();
+  scheduleRender();
 }
 
 function updateMirrorPreview(gaze) {
@@ -429,12 +406,17 @@ async function placePatchAtMirror(gaze) {
     if (!patchQueue.length) {
       return;
     }
-    const patch = patchQueue.shift();
-    currentPatchId = patch.id || patch.url;
-    activePatch = { patch, placement: mirror, style: derivePatchStyle(patch) };
-    renderScene();
+    const decodedPatch = patchQueue.shift();
+    currentPatchId = decodedPatch.id || decodedPatch.url;
+    activePatch = {
+      patch: decodedPatch,
+      image: decodedPatch.image,
+      placement: mirror,
+      style: derivePatchStyle(decodedPatch),
+    };
+    scheduleRender();
     updatePatchStatus();
-    void recordPatchUse(patch, gaze, mirror);
+    void recordPatchUse(decodedPatch, gaze, mirror);
     void ensurePatchBuffer();
   } finally {
     placing = false;
@@ -595,7 +577,7 @@ function finishCalibration() {
   updateCalibrationButtons();
   updateCalibrationStatus();
   updateGazeCursor(latestGazeRaw);
-  renderScene();
+  scheduleRender();
 }
 
 function cancelCalibration() {
@@ -612,7 +594,7 @@ function resetCalibration() {
   cancelCalibration();
   updateCalibrationStatus();
   updateGazeCursor(latestGazeRaw);
-  renderScene();
+  scheduleRender();
 }
 
 function connectWebSocket() {
@@ -632,8 +614,9 @@ function connectWebSocket() {
         updateGazeCursor(data.gaze);
         updateMirrorPreview(latestGazeCalibrated);
       }
-      if (data.blink && data.blink.state) {
-        void handleBlink(data.blink.state);
+    } else if (data.event === "blink") {
+      if (data.state) {
+        void handleBlink(data.state);
       }
     }
   });

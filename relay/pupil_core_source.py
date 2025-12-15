@@ -10,7 +10,7 @@ import msgpack  # type: ignore
 import zmq
 import zmq.asyncio  # type: ignore
 
-from blink_utils import HysteresisBlinkDetector, clamp
+from blink_utils import clamp
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper only
     from aria_stream_relay import RelayConfig
@@ -29,7 +29,7 @@ def _make_publishers(publisher: zmq.asyncio.Socket):
 
 
 async def pupil_core_source(publisher: zmq.asyncio.Socket, cfg: "RelayConfig") -> None:
-    """Subscribe to a Pupil Core runtime (via Pupil Remote) and relay gaze samples."""
+    """Subscribe to a Pupil Core runtime (via Pupil Remote) and relay gaze/blink samples."""
 
     loop, publish_async = _make_publishers(publisher)
 
@@ -50,79 +50,85 @@ async def pupil_core_source(publisher: zmq.asyncio.Socket, cfg: "RelayConfig") -
             "with Remote enabled and that the host/port are correct."
         ) from exc
 
-    sub_socket = ctx.socket(zmq.SUB)
-    sub_socket.connect(f"tcp://{cfg.pupil_host}:{sub_port}")
-    sub_socket.setsockopt_string(zmq.SUBSCRIBE, cfg.pupil_topic)
+    sub_address = f"tcp://{cfg.pupil_host}:{sub_port}"
+    gaze_socket = ctx.socket(zmq.SUB)
+    gaze_socket.connect(sub_address)
+    gaze_socket.setsockopt_string(zmq.SUBSCRIBE, cfg.pupil_topic)
     print(
-        f"[relay] Subscribed to topic prefix '{cfg.pupil_topic}' on tcp://{cfg.pupil_host}:{sub_port}",
+        f"[relay] Subscribed to gaze topic prefix '{cfg.pupil_topic}' on {sub_address}",
         flush=True,
     )
 
+    blink_socket = ctx.socket(zmq.SUB)
+    blink_socket.connect(sub_address)
+    blink_socket.setsockopt_string(zmq.SUBSCRIBE, "blinks")
+    print(f"[relay] Subscribed to blink topic 'blinks' on {sub_address}", flush=True)
+
+    poller = zmq.Poller()
+    poller.register(gaze_socket, zmq.POLLIN)
+    poller.register(blink_socket, zmq.POLLIN)
+
     stop_event = threading.Event()
     done_fut: asyncio.Future[None] = loop.create_future()
-    last_blink_state = "open"
     last_log = time.monotonic()
     samples_forwarded = 0
-    pupil_blink_detector = HysteresisBlinkDetector(
-        close_below=cfg.pupil_blink_close_confidence,
-        open_above=cfg.pupil_blink_open_confidence,
-        hold_ms=cfg.blink_hold_ms,
-        ema_alpha=cfg.pupil_confidence_ema_alpha,
-        initial_value=cfg.pupil_blink_open_confidence,
-    )
 
     def close_sockets() -> None:
         with suppress(Exception):
-            sub_socket.close(0)
+            gaze_socket.close(0)
+        with suppress(Exception):
+            blink_socket.close(0)
         with suppress(Exception):
             request_socket.close(0)
 
     def run() -> None:
-        nonlocal last_blink_state, last_log, samples_forwarded
+        nonlocal last_log, samples_forwarded
         try:
             while not stop_event.is_set():
                 try:
-                    frames = sub_socket.recv_multipart(flags=zmq.NOBLOCK)
-                except zmq.Again:
-                    time.sleep(0.01)
+                    socks = dict(poller.poll(timeout=100))
+                except zmq.ZMQError:  # pragma: no cover
+                    break  # context terminated
+
+                if not socks:
                     continue
-                if len(frames) < 2:
-                    continue
-                topic = (
-                    frames[0].decode("utf-8", errors="ignore")
-                    if isinstance(frames[0], (bytes, bytearray))
-                    else str(frames[0])
-                )
-                if cfg.pupil_topic and not topic.startswith(cfg.pupil_topic):
-                    continue
-                sample_obj = msgpack.loads(frames[1], raw=False)
-                if not isinstance(sample_obj, dict):
-                    print(
-                        f"[relay] Skipping unexpected payload type {type(sample_obj).__name__} from topic {topic}",
-                        flush=True,
-                    )
-                    continue
-                norm_pos = sample_obj.get("norm_pos") or (0.5, 0.5)
-                x_norm = clamp(float(norm_pos[0]))
-                y_norm = clamp(1.0 - float(norm_pos[1]))
-                confidence_raw = float(sample_obj.get("confidence", 0.0))
-                blink_inference = pupil_blink_detector.update(confidence_raw)
-                blink_state = blink_inference.state
-                filtered_confidence = blink_inference.filtered_value
-                valid = filtered_confidence >= cfg.pupil_confidence_threshold
-                ts_raw = sample_obj.get("timestamp") or sample_obj.get("timestamp_epoch")
-                ts = float(ts_raw) if ts_raw is not None else time.time()
-                gaze_payload = {"x_norm": x_norm, "y_norm": y_norm, "valid": valid}
-                blink_payload = {"state": blink_state, "confidence": blink_inference.confidence}
-                publish_async({"ts": ts, "event": "sample", "gaze": gaze_payload, "blink": blink_payload})
-                if blink_state != last_blink_state:
-                    last_blink_state = blink_state
+
+                if gaze_socket in socks:
+                    frames = gaze_socket.recv_multipart(flags=zmq.NOBLOCK)
+                    if len(frames) < 2:
+                        continue
+                    sample_obj = msgpack.loads(frames[1], raw=False)
+                    if not isinstance(sample_obj, dict):
+                        continue
+                    norm_pos = sample_obj.get("norm_pos") or (0.5, 0.5)
+                    x_norm = clamp(float(norm_pos[0]))
+                    y_norm = clamp(1.0 - float(norm_pos[1]))
+                    confidence = float(sample_obj.get("confidence", 0.0))
+                    valid = confidence >= cfg.pupil_confidence_threshold
+                    ts_raw = sample_obj.get("timestamp") or sample_obj.get("timestamp_epoch")
+                    ts = float(ts_raw) if ts_raw is not None else time.time()
+                    gaze_payload = {"x_norm": x_norm, "y_norm": y_norm, "valid": valid}
+                    publish_async({"ts": ts, "event": "sample", "gaze": gaze_payload})
+                    samples_forwarded += 1
+
+                if blink_socket in socks:
+                    frames = blink_socket.recv_multipart(flags=zmq.NOBLOCK)
+                    if len(frames) < 2:
+                        continue
+                    blink_obj = msgpack.loads(frames[1], raw=False)
+                    print(f"[relay][debug] Received blink object: {blink_obj}", flush=True)
+                    if not isinstance(blink_obj, dict):
+                        continue
+                    blink_type = blink_obj.get("type")
+                    blink_state = "closed" if blink_type == "onset" else "open"
+                    ts_raw = blink_obj.get("timestamp") or blink_obj.get("timestamp_epoch")
+                    ts = float(ts_raw) if ts_raw is not None else time.time()
                     publish_async({"ts": ts, "event": "blink", "state": blink_state})
-                samples_forwarded += 1
+
                 now = time.monotonic()
                 if now - last_log >= 5:
                     print(
-                        f"[relay] Forwarded {samples_forwarded} samples from topic '{topic}' (confidence {filtered_confidence:.2f})",
+                        f"[relay] Forwarded {samples_forwarded} gaze samples",
                         flush=True,
                     )
                     last_log = now
