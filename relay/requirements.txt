@@ -1,2 +1,0 @@
-pyzmq>=25.1
-msgpack>=1.0

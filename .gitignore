@@ -37,3 +37,5 @@ htmlcov/
 
 # Frontend dependencies
 node_modules/
+
+rust_native/*

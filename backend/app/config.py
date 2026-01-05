@@ -17,6 +17,11 @@ class Settings:
         ).split(",")
     )
     telemetry_history: int = int(os.getenv("TELEMETRY_HISTORY", "1024"))
+    pupil_host: str = os.getenv("PUPIL_HOST", "127.0.0.1")
+    pupil_remote_port: int = int(os.getenv("PUPIL_REMOTE_PORT", "50020"))
+    pupil_topic: str = os.getenv("PUPIL_TOPIC", "gaze.")
+    pupil_confidence_threshold: float = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"))
+    pupil_surface_name: str = os.getenv("PUPIL_SURFACE_NAME", "screen")
 
 
 @lru_cache(maxsize=1)

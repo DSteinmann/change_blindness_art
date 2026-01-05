@@ -7,8 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY backend/requirements.txt ./
-# Install system dependencies for OpenCV and AprilTag
+COPY generation/requirements.txt ./
+# Install system dependencies if any
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
@@ -17,13 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir -r requirements.txt
+# Add fastapi uvicorn to run the server
+RUN pip install --no-cache-dir fastapi uvicorn
 
-COPY backend ./backend
+COPY generation ./generation
 COPY assets ./assets
 
-ENV PATCH_ASSETS_DIR=/app/assets/patches \
-    ARIA_ZMQ_ENDPOINT=tcp://relay:5555
+EXPOSE 8001
 
-EXPOSE 8000
-
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "generation/server.py"]

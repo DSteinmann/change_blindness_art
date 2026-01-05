@@ -1,52 +1,39 @@
 version: "3.9"
 
 services:
-  relay:
-    build:
-      context: .
-      dockerfile: docker/relay.Dockerfile
-    container_name: aria-relay
-    # Run the relay in Pupil Core mode, connecting to Pupil Remote
-    # running on the host machine.
-    command: [
-      "python",
-      "aria_stream_relay.py",
-      "--mode",
-      "pupil",
-      "--endpoint",
-      "tcp://0.0.0.0:5555",
-      "--pupil-host",
-      "host.docker.internal",
-      "--pupil-port",
-      "50020",
-      "--pupil-topic",
-      "gaze.",
-      "--pupil-confidence-threshold",
-      "0.6"
-    ]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "5555:5555"
-    networks:
-      - aria-net
-
   backend:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
     container_name: aria-backend
-    depends_on:
-      - relay
     environment:
-      - ARIA_ZMQ_ENDPOINT=tcp://aria-relay:5555
       - PATCH_ASSETS_DIR=/app/assets/patches
+      # The following are needed for the backend to connect to Pupil Core
+      # running on the host machine.
+      - PUPIL_HOST=host.docker.internal
+      - PUPIL_REMOTE_PORT=50020
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Mount local assets so new generated patches are visible without
       # rebuilding the image.
       - ./assets:/app/assets:ro
     ports:
       - "8000:8000"
+    networks:
+      - aria-net
+
+  generation:
+    build:
+      context: .
+      dockerfile: docker/generation.Dockerfile
+    container_name: aria-generation
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./assets:/app/assets:rw
+    ports:
+      - "8001:8001"
     networks:
       - aria-net
 

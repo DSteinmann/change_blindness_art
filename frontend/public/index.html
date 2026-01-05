@@ -5,33 +5,79 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Aria Blink Patch Demo</title>
   <link rel="stylesheet" href="styles.css" />
+  <style>
+    .apriltag-marker {
+      position: fixed;
+      width: 100px;
+      height: 100px;
+      z-index: 9999;
+      pointer-events: none;
+      /* White background/border is REQUIRED for AprilTag detection */
+      background: white;
+      padding: 14px;
+      box-sizing: content-box;
+      image-rendering: pixelated;  /* Keep edges sharp */
+      image-rendering: crisp-edges;
+    }
+    #marker-0 { top: 0; left: 0; }
+    #marker-1 { top: 0; right: 0; }
+    #marker-2 { bottom: 0; right: 0; }
+    #marker-3 { bottom: 0; left: 0; }
+    
+    /* Viewport gaze cursor - overlays entire screen */
+    #viewport-gaze-cursor {
+      position: fixed;
+      width: 24px;
+      height: 24px;
+      border: 3px solid #00e5ff;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 10000;
+      transform: translate(-50%, -50%);
+      display: none;  /* Hidden until we get valid gaze */
+    }
+    #viewport-gaze-cursor::before,
+    #viewport-gaze-cursor::after {
+      content: '';
+      position: absolute;
+      background: #00e5ff;
+    }
+    #viewport-gaze-cursor::before {
+      width: 2px;
+      height: 16px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+    #viewport-gaze-cursor::after {
+      width: 16px;
+      height: 2px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+  </style>
 </head>
 <body>
+  <!-- Viewport-level gaze cursor (positioned by JS based on AprilTag-mapped coordinates) -->
+  <div id="viewport-gaze-cursor"></div>
+  
   <main>
+    <!-- AprilTag Markers for Automatic Calibration (local, generated via scripts/generate_apriltags.py) -->
+    <img id="marker-0" class="apriltag-marker" src="/assets/markers/tag36_11_00000.png" alt="AprilTag 0">
+    <img id="marker-1" class="apriltag-marker" src="/assets/markers/tag36_11_00001.png" alt="AprilTag 1">
+    <img id="marker-2" class="apriltag-marker" src="/assets/markers/tag36_11_00002.png" alt="AprilTag 2">
+    <img id="marker-3" class="apriltag-marker" src="/assets/markers/tag36_11_00003.png" alt="AprilTag 3">
+
     <section class="canvas-wrapper">
       <canvas id="scene-canvas"></canvas>
-      <div id="calibration-layer" class="calibration-hidden">
-        <div id="calibration-target"></div>
-        <div id="calibration-instructions">Focus on the highlighted point, then capture a sample.</div>
-      </div>
     </section>
     <aside>
-      <h1>Blink Opposite Patch Monitor</h1>
+      <h1>Change Blindness Demo</h1>
       <div class="stat"><span>WebSocket</span><span id="ws-status">disconnected</span></div>
-      <div class="stat"><span>Last Blink</span><span id="blink-status">n/a</span></div>
-      <div class="stat"><span>Patch Buffer</span><span id="patch-status">loading</span></div>
+      <div class="stat"><span>Status</span><span id="blink-status">n/a</span></div>
       <div class="stat"><span>Gaze</span><span id="gaze-status">n/a</span></div>
-      <div class="stat"><span>Mirror Target</span><span id="mirror-status">n/a</span></div>
-      <section class="calibration-panel">
-        <h2>Calibration</h2>
-        <div class="stat"><span>Status</span><span id="calibration-status">identity</span></div>
-        <div class="calibration-buttons">
-          <button type="button" id="start-calibration">Start Calibration</button>
-          <button type="button" id="capture-calibration" disabled>Capture Sample</button>
-          <button type="button" id="reset-calibration">Reset</button>
-        </div>
-        <p class="calibration-hint">Look at each highlighted point, then capture. A minimum of 3 samples is required.</p>
-      </section>
+      <div class="stat"><span>Target Region</span><span id="mirror-status">n/a</span></div>
     </aside>
   </main>
   <script src="main.js" type="module"></script>

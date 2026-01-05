@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .patch_manager import PatchManager
-from .stream import StreamHub, ZmqRelaySubscriber
+from .pupil_source import PupilSource
+from .stream import StreamHub
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("aria-backend")
@@ -30,7 +31,7 @@ app.mount("/assets", StaticFiles(directory=str(settings.patch_dir)), name="asset
 
 stream_hub = StreamHub(history_size=settings.telemetry_history)
 patch_manager = PatchManager(settings.patch_dir)
-relay_subscriber = ZmqRelaySubscriber(settings.zmq_endpoint, stream_hub.broadcast)
+pupil_source = PupilSource(settings, stream_hub.broadcast)
 patch_usage_log: list[dict[str, Any]] = []
 
 
@@ -38,13 +39,13 @@ patch_usage_log: list[dict[str, Any]] = []
 async def _startup() -> None:
     logger.info("Starting backend...")
     await patch_manager.load()
-    await relay_subscriber.start()
+    await pupil_source.start()
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     logger.info("Stopping backend")
-    await relay_subscriber.stop()
+    await pupil_source.stop()
 
 
 @app.get("/healthz")

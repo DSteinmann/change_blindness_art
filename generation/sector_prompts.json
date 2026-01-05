@@ -1,0 +1,15 @@
+{
+  "description": "Prompts for each sector. Sectors are named by row (T=top, M=middle, B=bottom) and column (L=left, C=center, R=right).",
+  "default": "add more detail, photorealistic, seamless blend",
+  "sectors": {
+    "TL": "add a small colorful bird in the upper left corner, photorealistic, natural lighting",
+    "TC": "add fluffy clouds in the upper center, photorealistic, soft lighting",
+    "TR": "add a butterfly in the upper right, photorealistic, delicate details",
+    "ML": "add green foliage on the left side, photorealistic, natural colors",
+    "MC": "enhance the center with more bananas, photorealistic, same style",
+    "MR": "add a small flower on the right side, photorealistic, vibrant colors",
+    "BL": "add fallen leaves in the lower left, photorealistic, autumn colors",
+    "BC": "add a subtle shadow in the lower center, photorealistic",
+    "BR": "add a small ladybug in the lower right corner, photorealistic, detailed"
+  }
+}

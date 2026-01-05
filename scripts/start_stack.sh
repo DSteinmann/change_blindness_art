@@ -10,37 +10,34 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 export PYTHONUNBUFFERED=1
-MODE="pupil"
-RELAY_ENDPOINT="tcp://127.0.0.1:5555"
-DEVICE_ID="${ARIA_DEVICE_ID:-}"
 BACKEND_PORT=8000
 FRONTEND_PORT=8080
-PUPIL_HOST="${PUPIL_REMOTE_HOST:-127.0.0.1}"
-PUPIL_PORT="${PUPIL_REMOTE_PORT:-50020}"
-PUPIL_TOPIC="${PUPIL_TOPIC:-gaze.}"
-PUPIL_CONFIDENCE="${PUPIL_CONFIDENCE_THRESHOLD:-0.6}"
+export PUPIL_HOST="${PUPIL_REMOTE_HOST:-127.0.0.1}"
+export PUPIL_REMOTE_PORT="${PUPIL_REMOTE_PORT:-50020}"
+export PUPIL_TOPIC="${PUPIL_TOPIC:-gaze.}"
+export PUPIL_CONFIDENCE_THRESHOLD="${PUPIL_CONFIDENCE_THRESHOLD:-0.6}"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/start_stack.sh [options]
 
 Options:
-  --mode <simulate|live|pupil>    Relay mode (default: pupil)
-  --device-id <uuid>        Aria device id (required for live mode)
   --pupil-host <host>       Pupil Remote host (default: 127.0.0.1)
   --pupil-port <port>       Pupil Remote command port (default: 50020)
-  --pupil-topic <topic>     Pupil gaze topic (default: gaze.3d.0)
+  --pupil-topic <topic>     Pupil gaze topic (default: gaze.)
   --pupil-confidence <val>  Confidence threshold for valid gaze (default: 0.6)
-  --endpoint <zmq>          ZeroMQ endpoint (default: tcp://127.0.0.1:5555)
   --backend-port <port>     Backend HTTP port (default: 8000)
   --frontend-port <port>    Frontend HTTP port (default: 8080)
   --help                    Show this help message
 
 Environment:
-  PYTHON_BIN   Interpreter that has relay + backend deps installed (default: python3)
-  ARIA_DEVICE_ID  Used as fallback for --device-id in live mode
+  PYTHON_BIN                  Interpreter that has backend deps installed (default: python3)
+  PUPIL_REMOTE_HOST           Used as fallback for --pupil-host
+  PUPIL_REMOTE_PORT         Used as fallback for --pupil-port
+  PUPIL_TOPIC                 Used as fallback for --pupil-topic
+  PUPIL_CONFIDENCE_THRESHOLD  Used as fallback for --pupil-confidence
 
-The script runs the relay, backend (uvicorn) and static frontend server locally.
+The script runs the backend (uvicorn) and static frontend server locally.
 Press Ctrl+C to stop all services.
 EOF
 }
@@ -51,32 +48,20 @@ log() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mode)
-      MODE="$2"
-      shift 2
-      ;;
-    --device-id)
-      DEVICE_ID="$2"
-      shift 2
-      ;;
     --pupil-host)
-      PUPIL_HOST="$2"
+      export PUPIL_HOST="$2"
       shift 2
       ;;
     --pupil-port)
-      PUPIL_PORT="$2"
+      export PUPIL_REMOTE_PORT="$2"
       shift 2
       ;;
     --pupil-topic)
-      PUPIL_TOPIC="$2"
+      export PUPIL_TOPIC="$2"
       shift 2
       ;;
     --pupil-confidence)
-      PUPIL_CONFIDENCE="$2"
-      shift 2
-      ;;
-    --endpoint)
-      RELAY_ENDPOINT="$2"
+      export PUPIL_CONFIDENCE_THRESHOLD="$2"
       shift 2
       ;;
     --backend-port)
@@ -101,16 +86,6 @@ done
 
 log "Using interpreter: $PYTHON_BIN"
 
-if [[ "$MODE" != "simulate" && "$MODE" != "live" && "$MODE" != "pupil" ]]; then
-  echo "--mode must be simulate, live, or pupil" >&2
-  exit 1
-fi
-
-if [[ "$MODE" == "live" && -z "$DEVICE_ID" ]]; then
-  echo "--device-id (or ARIA_DEVICE_ID env) is required for live mode" >&2
-  exit 1
-fi
-
 PROC_NAMES=()
 PROC_PIDS=()
 
@@ -133,17 +108,8 @@ cleanup() {
 
 trap cleanup INT TERM
 
-log "Starting relay in $MODE mode"
-relay_cmd=("$PYTHON_BIN" "$ROOT_DIR/relay/aria_stream_relay.py" --mode "$MODE" --endpoint "$RELAY_ENDPOINT")
-if [[ "$MODE" == "live" ]]; then
-  relay_cmd+=(--device-id "$DEVICE_ID")
-elif [[ "$MODE" == "pupil" ]]; then
-  relay_cmd+=(--pupil-host "$PUPIL_HOST" --pupil-port "$PUPIL_PORT" --pupil-topic "$PUPIL_TOPIC" --pupil-confidence-threshold "$PUPIL_CONFIDENCE")
-fi
-spawn "relay" "${relay_cmd[@]}"
-
 log "Starting backend on port $BACKEND_PORT"
-spawn "backend" bash -c "cd '$ROOT_DIR/backend' && ARIA_ZMQ_ENDPOINT='$RELAY_ENDPOINT' PATCH_ASSETS_DIR='$ROOT_DIR/assets/patches' '$PYTHON_BIN' -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT"
+spawn "backend" bash -c "cd '$ROOT_DIR/backend' && PATCH_ASSETS_DIR='$ROOT_DIR/assets/patches' '$PYTHON_BIN' -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT"
 
 log "Starting frontend on port $FRONTEND_PORT"
 spawn "frontend" bash -c "cd '$ROOT_DIR/frontend/public' && '$PYTHON_BIN' -m http.server $FRONTEND_PORT"

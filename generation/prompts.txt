@@ -1,0 +1,12 @@
+# Progressive prompts for image modification
+# One prompt per line, server cycles through them
+add one more banana to the image, photorealistic, high detail
+add another banana to the composition, photorealistic, natural lighting
+add a small banana in the modified area, photorealistic, seamless blend
+introduce one more banana naturally, photorealistic, same style
+add a slightly ripe banana, photorealistic, consistent lighting
+place another banana organically, photorealistic, high quality
+add a curved banana to the scene, photorealistic, natural placement
+include one more banana fruit, photorealistic, seamless integration
+add a fresh yellow banana, photorealistic, matching shadows
+add a banana with spots, photorealistic, aged naturally

@@ -1,43 +1,56 @@
 const API_ROOT = window.API_ROOT || "http://localhost:8000";
 const WS_URL = API_ROOT.replace("http", "ws") + "/ws/stream";
+const GENERATION_API = window.GENERATION_API || "http://localhost:8001";
 
+// DOM Elements
 const canvasWrapper = document.querySelector(".canvas-wrapper");
 const wsStatus = document.getElementById("ws-status");
 const blinkStatus = document.getElementById("blink-status");
-const patchStatus = document.getElementById("patch-status");
 const gazeStatus = document.getElementById("gaze-status");
 const mirrorStatus = document.getElementById("mirror-status");
 const sceneCanvas = document.getElementById("scene-canvas");
 const sceneCtx = sceneCanvas.getContext("2d");
-const calibrationStatus = document.getElementById("calibration-status");
-const startCalibrationBtn = document.getElementById("start-calibration");
-const captureCalibrationBtn = document.getElementById("capture-calibration");
-const resetCalibrationBtn = document.getElementById("reset-calibration");
-const calibrationLayer = document.getElementById("calibration-layer");
-const calibrationTarget = document.getElementById("calibration-target");
-const calibrationInstructions = document.getElementById("calibration-instructions");
+const viewportGazeCursor = document.getElementById("viewport-gaze-cursor");
 
-const PATCH_PREFETCH = 8;
-const LOCAL_STORAGE_KEY = "aria_calibration_state";
-const DEFAULT_TRANSFORM = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0 };
-const CALIBRATION_POINTS = [
-  { label: "top-left", x_norm: 0.2, y_norm: 0.2 },
-  { label: "top-right", x_norm: 0.8, y_norm: 0.2 },
-  { label: "bottom-right", x_norm: 0.8, y_norm: 0.8 },
-  { label: "bottom-left", x_norm: 0.2, y_norm: 0.8 },
-  { label: "center", x_norm: 0.5, y_norm: 0.5 },
-];
-const SHAPE_TYPES = ["circle", "square", "triangle", "diamond"];
-const COLOR_PALETTE = ["#ff5e5b", "#00c2ff", "#ffd166", "#06d6a0", "#c084fc", "#f28482"];
-
+// State
 let renderScheduled = false;
+let canvasMetrics = { width: 0, height: 0, dpr: 1 };
+let activePatch = null;
+let capturedImageBase64 = null;
+
+// Gaze tracking
+let latestGazeRaw = { x_norm: 0.5, y_norm: 0.5, valid: false };
+let smoothedGaze = { x_norm: 0.5, y_norm: 0.5 };
+const SMOOTHING_FACTOR = 0.08;  // Lower = smoother, less jitter (was 0.15)
+let lastBlinkState = "open";
+
+// 3x3 Grid sectors for robust fixation detection
+const GRID_SIZE = 3;  // 3x3 = 9 sectors
+let currentSector = { row: 1, col: 1 };  // Center
+let lastSector = { row: 1, col: 1 };
+
+// Fixation detection (per sector)
+const FIXATION_DURATION_MS = 3000;  // Reduced since sectors are more stable
+let fixationStartTime = null;
+let fixatedSector = null;
+let isGenerating = false;
+
+// Pending image queue for blink-triggered swap
+let pendingSwap = null;
+
+// Default base image (served from backend at /assets which maps to assets/patches/)
+const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/a-single-banana-on-a-white-background-in-the-upp-p1-1765812893-00.png`;
+
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+
+// ============================================
+// CANVAS RENDERING
+// ============================================
 
 function scheduleRender() {
-  if (renderScheduled) {
-    return;
-  }
+  if (renderScheduled) return;
   renderScheduled = true;
-  window.requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
     renderScene();
     renderScheduled = false;
   });
@@ -53,549 +66,339 @@ function resizeCanvas() {
   sceneCanvas.style.height = `${rect.height}px`;
   sceneCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   scheduleRender();
-  if (calibrationActive) {
-    showCalibrationTarget(CALIBRATION_POINTS[calibrationIndex] || CALIBRATION_POINTS[0]);
-  }
-}
-
-function hashString(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i += 1) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
-function derivePatchStyle(patch) {
-  const key = patch?.id || patch?.url || JSON.stringify(patch || {});
-  const hash = hashString(key);
-  return {
-    shape: SHAPE_TYPES[hash % SHAPE_TYPES.length],
-    fill: COLOR_PALETTE[hash % COLOR_PALETTE.length],
-    stroke: "rgba(0,0,0,0.32)",
-    scale: 0.22,
-  };
 }
 
 function drawBackground() {
   const { width, height } = canvasMetrics;
-  if (width === 0 || height === 0) {
-    return;
-  }
+  if (!width || !height) return;
+  
   const gradient = sceneCtx.createLinearGradient(0, 0, width, height);
   gradient.addColorStop(0, "#050d24");
   gradient.addColorStop(1, "#091737");
   sceneCtx.fillStyle = gradient;
   sceneCtx.fillRect(0, 0, width, height);
-  sceneCtx.strokeStyle = "rgba(255,255,255,0.05)";
-  const step = Math.max(40, Math.min(width, height) / 12);
-  sceneCtx.lineWidth = 1;
-  for (let x = 0; x <= width; x += step) {
-    sceneCtx.beginPath();
-    sceneCtx.moveTo(x, 0);
-    sceneCtx.lineTo(x, height);
-    sceneCtx.stroke();
-  }
-  for (let y = 0; y <= height; y += step) {
-    sceneCtx.beginPath();
-    sceneCtx.moveTo(0, y);
-    sceneCtx.lineTo(width, y);
-    sceneCtx.stroke();
-  }
-}
-
-function drawPatchShape(entry) {
-  if (!entry) {
-    return;
-  }
-  const { placement, style } = entry;
-  const { x, y } = normToCanvasPixels(placement);
-  const size = Math.min(canvasMetrics.width, canvasMetrics.height) * style.scale;
-  sceneCtx.save();
-  sceneCtx.translate(x, y);
-  sceneCtx.fillStyle = style.fill;
-  sceneCtx.strokeStyle = style.stroke;
-  sceneCtx.lineWidth = 4;
-  if (style.shape === "circle") {
-    sceneCtx.beginPath();
-    sceneCtx.arc(0, 0, size / 2, 0, Math.PI * 2);
-    sceneCtx.fill();
-    sceneCtx.stroke();
-  } else if (style.shape === "square") {
-    sceneCtx.beginPath();
-    sceneCtx.rect(-size / 2, -size / 2, size, size);
-    sceneCtx.fill();
-    sceneCtx.stroke();
-  } else if (style.shape === "triangle") {
-    sceneCtx.beginPath();
-    sceneCtx.moveTo(0, -size / 2);
-    sceneCtx.lineTo(size / 2, size / 2);
-    sceneCtx.lineTo(-size / 2, size / 2);
-    sceneCtx.closePath();
-    sceneCtx.fill();
-    sceneCtx.stroke();
-  } else {
-    sceneCtx.beginPath();
-    sceneCtx.moveTo(0, -size / 2);
-    sceneCtx.lineTo(size / 2, 0);
-    sceneCtx.lineTo(0, size / 2);
-    sceneCtx.lineTo(-size / 2, 0);
-    sceneCtx.closePath();
-    sceneCtx.fill();
-    sceneCtx.stroke();
-  }
-  sceneCtx.restore();
 }
 
 function drawPatch(entry) {
-  if (!entry || !entry.image) {
-    return;
-  }
+  if (!entry?.image) return;
+  
   const { image } = entry;
-  const canvasW = canvasMetrics.width || sceneCanvas.width;
-  const canvasH = canvasMetrics.height || sceneCanvas.height;
-  if (!canvasW || !canvasH) {
-    return;
-  }
+  const canvasW = canvasMetrics.width || 1;
+  const canvasH = canvasMetrics.height || 1;
   const iw = image.naturalWidth || 1;
   const ih = image.naturalHeight || 1;
-  // Scale to fit entirely within the canvas while preserving aspect ratio.
+  
   const scale = Math.min(canvasW / iw, canvasH / ih);
   const drawW = iw * scale;
   const drawH = ih * scale;
   const offsetX = (canvasW - drawW) / 2;
   const offsetY = (canvasH - drawH) / 2;
+  
   sceneCtx.drawImage(image, offsetX, offsetY, drawW, drawH);
 }
 
-function drawMirrorIndicator() {
-  const { x, y } = normToCanvasPixels(latestMirrorTarget);
-  const size = Math.min(canvasMetrics.width, canvasMetrics.height) * 0.12;
-  sceneCtx.save();
-  sceneCtx.strokeStyle = "rgba(255,255,255,0.4)";
-  sceneCtx.setLineDash([6, 6]);
-  sceneCtx.lineWidth = 2;
-  sceneCtx.beginPath();
-  sceneCtx.arc(x, y, size / 2, 0, Math.PI * 2);
-  sceneCtx.stroke();
-  sceneCtx.restore();
-}
-
-function drawGazeCursor() {
-  if (!latestGazeCalibrated?.valid) {
-    return;
-  }
-  const { x, y } = normToCanvasPixels(latestGazeCalibrated);
-  sceneCtx.save();
-  sceneCtx.strokeStyle = "#00e5ff";
-  sceneCtx.lineWidth = 2.5;
-  sceneCtx.beginPath();
-  sceneCtx.moveTo(x - 12, y);
-  sceneCtx.lineTo(x + 12, y);
-  sceneCtx.moveTo(x, y - 12);
-  sceneCtx.lineTo(x, y + 12);
-  sceneCtx.stroke();
-  sceneCtx.beginPath();
-  sceneCtx.arc(x, y, 10, 0, Math.PI * 2);
-  sceneCtx.stroke();
-  sceneCtx.restore();
-}
-
 function renderScene() {
-  if (!canvasMetrics.width || !canvasMetrics.height) {
-    return;
-  }
+  if (!canvasMetrics.width || !canvasMetrics.height) return;
   sceneCtx.clearRect(0, 0, canvasMetrics.width, canvasMetrics.height);
   drawBackground();
   drawPatch(activePatch);
-  drawMirrorIndicator();
-  drawGazeCursor();
 }
 
-let latestGazeRaw = { x_norm: 0.5, y_norm: 0.5, valid: false };
-let latestGazeCalibrated = { x_norm: 0.5, y_norm: 0.5, valid: false };
-let lastBlinkState = "open";
-let patchQueue = [];
-let refillPromise = null;
-let placing = false;
-let currentPatchId = "n/a";
-let activePatch = null;
-let latestMirrorTarget = { x_norm: 0.5, y_norm: 0.5 };
-let canvasMetrics = { width: 0, height: 0, dpr: 1 };
-let calibrationTransform = { ...DEFAULT_TRANSFORM };
-let calibrationPointCount = 0;
-let calibrationActive = false;
-let calibrationSamples = [];
-let calibrationIndex = 0;
+// ============================================
+// GAZE TRACKING
+// ============================================
 
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-function loadCalibrationState() {
-  try {
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!stored) {
-      calibrationTransform = { ...DEFAULT_TRANSFORM };
-      calibrationPointCount = 0;
-      return;
-    }
-    const parsed = JSON.parse(stored);
-    if (parsed && parsed.transform) {
-      calibrationTransform = {
-        ...DEFAULT_TRANSFORM,
-        ...parsed.transform,
-      };
-      calibrationPointCount = parsed.points || 0;
-    }
-  } catch (err) {
-    console.warn("calibration state load failed", err);
-    calibrationTransform = { ...DEFAULT_TRANSFORM };
-    calibrationPointCount = 0;
-  }
-}
-
-function persistCalibrationState() {
-  try {
-    localStorage.setItem(
-      LOCAL_STORAGE_KEY,
-      JSON.stringify({ transform: calibrationTransform, points: calibrationPointCount })
-    );
-  } catch (err) {
-    console.warn("calibration state save failed", err);
-  }
-}
-
-function resetCalibrationState() {
-  calibrationTransform = { ...DEFAULT_TRANSFORM };
-  calibrationPointCount = 0;
-  localStorage.removeItem(LOCAL_STORAGE_KEY);
-}
-
-function updateCalibrationStatus() {
-  if (calibrationActive) {
-    calibrationStatus.textContent = `capturing ${calibrationIndex + 1}/${CALIBRATION_POINTS.length}`;
-  } else if (calibrationPointCount > 0) {
-    calibrationStatus.textContent = `custom (${calibrationPointCount} pts)`;
+function updateViewportGazeCursor(gaze) {
+  if (!viewportGazeCursor) return;
+  
+  if (gaze?.valid) {
+    smoothedGaze.x_norm += SMOOTHING_FACTOR * (gaze.x_norm - smoothedGaze.x_norm);
+    smoothedGaze.y_norm += SMOOTHING_FACTOR * (gaze.y_norm - smoothedGaze.y_norm);
+    
+    viewportGazeCursor.style.left = `${smoothedGaze.x_norm * window.innerWidth}px`;
+    viewportGazeCursor.style.top = `${smoothedGaze.y_norm * window.innerHeight}px`;
+    viewportGazeCursor.style.display = "block";
   } else {
-    calibrationStatus.textContent = "identity";
+    viewportGazeCursor.style.display = "none";
   }
-}
-
-function applyCalibration(gaze) {
-  const { a, b, c, d, e, f } = calibrationTransform;
-  const x = a * gaze.x_norm + b * gaze.y_norm + c;
-  const y = d * gaze.x_norm + e * gaze.y_norm + f;
-  return {
-    ...gaze,
-    x_norm: clamp(x, 0, 1),
-    y_norm: clamp(y, 0, 1),
-  };
-}
-
-async function fetchAndDecodePatch() {
-  // Request only generated PNG patches (stimulus="generated") so we
-  // skip any legacy SVG defaults defined in manifest.json.
-  const response = await fetch(`${API_ROOT}/patch/next?stimulus=generated`);
-  if (!response.ok) {
-    throw new Error(`patch/next failed (${response.status})`);
-  }
-  const patch = await response.json();
-  if (!patch.url) {
-    throw new Error("patch has no url");
-  }
-  const url = /^https?:\/\//.test(patch.url) ? patch.url : `${API_ROOT}${patch.url}`;
-  const image = new Image();
-  image.src = url;
-  await image.decode();
-  return { ...patch, image };
-}
-
-function updatePatchStatus() {
-  patchStatus.textContent = `${currentPatchId} (queue ${patchQueue.length})`;
-}
-
-async function ensurePatchBuffer() {
-  if (refillPromise) {
-    return refillPromise;
-  }
-  refillPromise = (async () => {
-    try {
-      while (patchQueue.length < PATCH_PREFETCH) {
-        const decodedPatch = await fetchAndDecodePatch();
-        patchQueue.push(decodedPatch);
-        updatePatchStatus();
-      }
-    } catch (err) {
-      console.error("patch prefetch failed", err);
-    } finally {
-      refillPromise = null;
-    }
-  })();
-  return refillPromise;
-}
-
-function getCanvasRect() {
-  return sceneCanvas.getBoundingClientRect();
-}
-
-function normToCanvasPixels(norm) {
-  return {
-    x: norm.x_norm * canvasMetrics.width,
-    y: norm.y_norm * canvasMetrics.height,
-  };
-}
-
-function normToViewportPosition(norm) {
-  const rect = getCanvasRect();
-  return {
-    x: rect.left + norm.x_norm * rect.width,
-    y: rect.top + norm.y_norm * rect.height,
-  };
 }
 
 function updateGazeCursor(gaze) {
   latestGazeRaw = gaze;
-  const calibrated = applyCalibration(gaze);
-  latestGazeCalibrated = { ...calibrated, valid: Boolean(gaze?.valid) };
-  gazeStatus.textContent = `${calibrated.x_norm.toFixed(2)}, ${calibrated.y_norm.toFixed(2)}`;
-  updateMirrorPreview(calibrated);
+  updateViewportGazeCursor(gaze);
+  
+  gazeStatus.textContent = `${gaze.x_norm.toFixed(2)}, ${gaze.y_norm.toFixed(2)}`;
+  
+  // Show opposite (target) region
+  const mirror = { x: 1 - gaze.x_norm, y: 1 - gaze.y_norm };
+  mirrorStatus.textContent = `${mirror.x.toFixed(2)}, ${mirror.y.toFixed(2)}`;
+  
+  checkFixation(gaze);
   scheduleRender();
 }
 
-function updateMirrorPreview(gaze) {
-  if (!gaze || Number.isNaN(gaze.x_norm) || Number.isNaN(gaze.y_norm)) {
-    return latestMirrorTarget;
-  }
-  const mirror = {
-    x_norm: clamp(1 - gaze.x_norm, 0, 1),
-    y_norm: clamp(1 - gaze.y_norm, 0, 1),
+// ============================================
+// SECTOR-BASED FIXATION DETECTION
+// ============================================
+
+// Convert normalized gaze to sector (0-2 for row and col)
+function gazeToSector(gaze) {
+  const col = Math.min(GRID_SIZE - 1, Math.floor(gaze.x_norm * GRID_SIZE));
+  const row = Math.min(GRID_SIZE - 1, Math.floor(gaze.y_norm * GRID_SIZE));
+  return { row, col };
+}
+
+// Get the opposite sector
+function getOppositeSector(sector) {
+  return {
+    row: (GRID_SIZE - 1) - sector.row,
+    col: (GRID_SIZE - 1) - sector.col
   };
-  latestMirrorTarget = mirror;
-  mirrorStatus.textContent = `${mirror.x_norm.toFixed(2)}, ${mirror.y_norm.toFixed(2)}`;
-  return mirror;
 }
 
-async function recordPatchUse(patch, calibratedGaze, placement) {
-  try {
-    await fetch(`${API_ROOT}/patch/use`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patch,
-        gaze: calibratedGaze,
-        raw_gaze: latestGazeRaw,
-        placement,
-        reason: "blink-opposite",
-      }),
-    });
-  } catch (err) {
-    console.error("patch/use failed", err);
-  }
+// Convert sector to normalized region center
+function sectorToNormCenter(sector) {
+  return {
+    x_norm: (sector.col + 0.5) / GRID_SIZE,
+    y_norm: (sector.row + 0.5) / GRID_SIZE
+  };
 }
 
-async function placePatchAtMirror(gaze) {
-  if (placing) {
+// Sector name for display
+function sectorName(sector) {
+  const rowNames = ["T", "M", "B"];  // Top, Middle, Bottom
+  const colNames = ["L", "C", "R"];  // Left, Center, Right
+  return `${rowNames[sector.row]}${colNames[sector.col]}`;
+}
+
+function checkFixation(gaze) {
+  if (!gaze?.valid || isGenerating) {
+    fixationStartTime = null;
     return;
   }
-  placing = true;
-  try {
-    const mirror = updateMirrorPreview(gaze);
-    if (!patchQueue.length) {
-      await ensurePatchBuffer();
+  
+  // Determine which sector the gaze is in
+  const sector = gazeToSector(smoothedGaze);  // Use smoothed for stability
+  const sectorChanged = sector.row !== currentSector.row || sector.col !== currentSector.col;
+  
+  if (sectorChanged) {
+    // Reset fixation timer when sector changes
+    lastSector = currentSector;
+    currentSector = sector;
+    fixationStartTime = Date.now();
+    fixatedSector = null;
+  } else if (fixationStartTime !== null) {
+    const elapsed = Date.now() - fixationStartTime;
+    const progress = Math.min(elapsed / FIXATION_DURATION_MS, 1);
+    
+    const opposite = getOppositeSector(sector);
+    blinkStatus.textContent = `${sectorName(sector)}→${sectorName(opposite)} ${(progress * 100).toFixed(0)}%`;
+    
+    if (elapsed >= FIXATION_DURATION_MS && capturedImageBase64 && !fixatedSector) {
+      fixatedSector = sector;
+      triggerSectorGeneration(sector);
     }
-    if (!patchQueue.length) {
-      return;
-    }
-    const decodedPatch = patchQueue.shift();
-    currentPatchId = decodedPatch.id || decodedPatch.url;
-    activePatch = {
-      patch: decodedPatch,
-      image: decodedPatch.image,
-      placement: mirror,
-      style: derivePatchStyle(decodedPatch),
-    };
-    scheduleRender();
-    updatePatchStatus();
-    void recordPatchUse(decodedPatch, gaze, mirror);
-    void ensurePatchBuffer();
-  } finally {
-    placing = false;
+  } else {
+    fixationStartTime = Date.now();
   }
 }
 
-async function handleBlink(state) {
-  if (lastBlinkState !== "closed" && state === "closed" && latestGazeCalibrated?.valid) {
-    await placePatchAtMirror(latestGazeCalibrated);
+async function triggerSectorGeneration(focusSector) {
+  if (isGenerating || pendingSwap) return;
+  
+  isGenerating = true;
+  const oppositeSector = getOppositeSector(focusSector);
+  blinkStatus.textContent = `generating ${sectorName(oppositeSector)}...`;
+  
+  console.log(`Fixation in ${sectorName(focusSector)}, will modify ${sectorName(oppositeSector)}`);
+  
+  try {
+    await generateForSector(focusSector, oppositeSector);
+    blinkStatus.textContent = pendingSwap ? `${sectorName(oppositeSector)} ready` : "ready";
+  } catch (err) {
+    console.error("Generation error:", err);
+    blinkStatus.textContent = "error";
   }
-  blinkStatus.textContent = state;
+  
+  setTimeout(() => { isGenerating = false; }, 1000);
+}
+
+async function generateForSector(focusSector, targetSector) {
+  if (!capturedImageBase64) return null;
+  
+  const focusCenter = sectorToNormCenter(focusSector);
+  const targetCenter = sectorToNormCenter(targetSector);
+  
+  console.log(`Generating: focus=${sectorName(focusSector)} (${focusCenter.x_norm.toFixed(2)},${focusCenter.y_norm.toFixed(2)}), target=${sectorName(targetSector)}`);
+  
+  const response = await fetch(`${GENERATION_API}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image_base64: capturedImageBase64,
+      focus_x: focusCenter.x_norm,
+      focus_y: focusCenter.y_norm,
+      // Pass target sector info for more precise region
+      target_row: targetSector.row,
+      target_col: targetSector.col,
+      grid_size: GRID_SIZE
+    })
+  });
+  
+  if (!response.ok) throw new Error(await response.text());
+  
+  const promptUsed = response.headers.get("X-Prompt-Used");
+  if (promptUsed) console.log("Prompt:", promptUsed);
+  
+  const blob = await response.blob();
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = URL.createObjectURL(blob);
+  });
+  
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d").drawImage(img, 0, 0);
+  
+  pendingSwap = {
+    image: img,
+    base64: canvas.toDataURL("image/png"),
+    targetSector: targetSector,
+    focusSector: focusSector
+  };
+  
+  console.log("Generated image ready, waiting for safe blink...");
+  return pendingSwap;
+}
+
+// ============================================
+// GENERATION
+// ============================================
+
+async function loadDefaultBaseImage() {
+  try {
+    console.log("Loading default base image:", DEFAULT_BASE_IMAGE);
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = DEFAULT_BASE_IMAGE;
+    });
+    
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    capturedImageBase64 = canvas.toDataURL("image/png");
+    
+    activePatch = { image: img };
+    scheduleRender();
+    console.log("Default base image loaded");
+  } catch (err) {
+    console.error("Failed to load default base image:", err);
+  }
+}
+
+async function generateToPending(focusX, focusY, modifiedRegion) {
+  if (!capturedImageBase64) return null;
+  
+  console.log(`Generating with focus at (${focusX.toFixed(2)}, ${focusY.toFixed(2)})`);
+  
+  const response = await fetch(`${GENERATION_API}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image_base64: capturedImageBase64,
+      focus_x: focusX,
+      focus_y: focusY
+    })
+  });
+  
+  if (!response.ok) throw new Error(await response.text());
+  
+  const promptUsed = response.headers.get("X-Prompt-Used");
+  if (promptUsed) console.log("Prompt:", promptUsed);
+  
+  const blob = await response.blob();
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = URL.createObjectURL(blob);
+  });
+  
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d").drawImage(img, 0, 0);
+  
+  pendingSwap = {
+    image: img,
+    base64: canvas.toDataURL("image/png"),
+    modifiedRegion
+  };
+  
+  console.log("Generated image ready, waiting for safe blink...");
+  return pendingSwap;
+}
+
+// ============================================
+// BLINK HANDLING (SECTOR-BASED)
+// ============================================
+
+function isSafeToSwap() {
+  if (!pendingSwap?.targetSector) return false;
+  
+  // Get current sector from smoothed gaze
+  const currentGazeSector = gazeToSector(smoothedGaze);
+  
+  // Safe to swap if user is NOT in the target (modified) sector
+  const inTargetSector = currentGazeSector.row === pendingSwap.targetSector.row && 
+                         currentGazeSector.col === pendingSwap.targetSector.col;
+  
+  return !inTargetSector;
+}
+
+function attemptSwapOnBlink() {
+  if (!pendingSwap) return false;
+  
+  if (isSafeToSwap()) {
+    const targetName = sectorName(pendingSwap.targetSector);
+    activePatch = { image: pendingSwap.image };
+    capturedImageBase64 = pendingSwap.base64;
+    pendingSwap = null;
+    fixatedSector = null;  // Reset so we can generate again
+    scheduleRender();
+    console.log(`Image swapped! Modified sector: ${targetName}`);
+    return true;
+  }
+  
+  console.log(`Swap blocked - user looking at target sector ${sectorName(pendingSwap.targetSector)}`);
+  return false;
+}
+
+function handleBlink(state) {
+  if (lastBlinkState !== "closed" && state === "closed") {
+    if (pendingSwap) {
+      const swapped = attemptSwapOnBlink();
+      blinkStatus.textContent = swapped ? "swapped!" : "blocked";
+    } else {
+      blinkStatus.textContent = "no pending";
+    }
+  } else if (state === "open") {
+    blinkStatus.textContent = pendingSwap ? "ready (pending)" : "ready";
+  }
   lastBlinkState = state;
 }
 
-function setCalibrationOverlay(active) {
-  calibrationLayer.classList.toggle("calibration-hidden", !active);
-  calibrationLayer.classList.toggle("active", active);
-}
-
-function showCalibrationTarget(point) {
-  const { x, y } = normToViewportPosition(point);
-  calibrationTarget.style.left = `${x}px`;
-  calibrationTarget.style.top = `${y}px`;
-  calibrationInstructions.textContent = `Point ${calibrationIndex + 1}/${CALIBRATION_POINTS.length}: ${point.label}`;
-}
-
-function updateCalibrationButtons() {
-  startCalibrationBtn.disabled = calibrationActive;
-  captureCalibrationBtn.disabled = !calibrationActive;
-}
-
-function startCalibration() {
-  calibrationActive = true;
-  calibrationSamples = [];
-  calibrationIndex = 0;
-  setCalibrationOverlay(true);
-  showCalibrationTarget(CALIBRATION_POINTS[calibrationIndex]);
-  updateCalibrationButtons();
-  updateCalibrationStatus();
-}
-
-function addCalibrationSample() {
-  if (!calibrationActive) {
-    return;
-  }
-  calibrationSamples.push({
-    measured: { ...latestGazeRaw },
-    target: CALIBRATION_POINTS[calibrationIndex],
-  });
-  calibrationIndex += 1;
-  if (calibrationIndex >= CALIBRATION_POINTS.length) {
-    finishCalibration();
-  } else {
-    showCalibrationTarget(CALIBRATION_POINTS[calibrationIndex]);
-    updateCalibrationStatus();
-  }
-}
-
-function solve3x3(matrix, vector) {
-  const m = matrix.map((row) => row.slice());
-  const b = vector.slice();
-  for (let i = 0; i < 3; i += 1) {
-    let pivotRow = i;
-    for (let r = i + 1; r < 3; r += 1) {
-      if (Math.abs(m[r][i]) > Math.abs(m[pivotRow][i])) {
-        pivotRow = r;
-      }
-    }
-    if (Math.abs(m[pivotRow][i]) < 1e-8) {
-      return null;
-    }
-    if (pivotRow !== i) {
-      [m[i], m[pivotRow]] = [m[pivotRow], m[i]];
-      [b[i], b[pivotRow]] = [b[pivotRow], b[i]];
-    }
-    const pivot = m[i][i];
-    for (let c = i; c < 3; c += 1) {
-      m[i][c] /= pivot;
-    }
-    b[i] /= pivot;
-    for (let r = 0; r < 3; r += 1) {
-      if (r === i) continue;
-      const factor = m[r][i];
-      for (let c = i; c < 3; c += 1) {
-        m[r][c] -= factor * m[i][c];
-      }
-      b[r] -= factor * b[i];
-    }
-  }
-  return b;
-}
-
-function computeAffineTransform(samples) {
-  if (samples.length < 3) {
-    return null;
-  }
-  let s_xx = 0;
-  let s_xy = 0;
-  let s_x = 0;
-  let s_yy = 0;
-  let s_y = 0;
-  let count = 0;
-  let sx_tx = 0;
-  let sy_tx = 0;
-  let s_tx = 0;
-  let sx_ty = 0;
-  let sy_ty = 0;
-  let s_ty = 0;
-  samples.forEach(({ measured, target }) => {
-    const x = measured.x_norm;
-    const y = measured.y_norm;
-    s_xx += x * x;
-    s_xy += x * y;
-    s_x += x;
-    s_yy += y * y;
-    s_y += y;
-    sx_tx += x * target.x_norm;
-    sy_tx += y * target.x_norm;
-    s_tx += target.x_norm;
-    sx_ty += x * target.y_norm;
-    sy_ty += y * target.y_norm;
-    s_ty += target.y_norm;
-    count += 1;
-  });
-  const mat = [
-    [s_xx, s_xy, s_x],
-    [s_xy, s_yy, s_y],
-    [s_x, s_y, count],
-  ];
-  const coeffX = solve3x3(mat, [sx_tx, sy_tx, s_tx]);
-  const coeffY = solve3x3(mat, [sx_ty, sy_ty, s_ty]);
-  if (!coeffX || !coeffY) {
-    return null;
-  }
-  return {
-    a: coeffX[0],
-    b: coeffX[1],
-    c: coeffX[2],
-    d: coeffY[0],
-    e: coeffY[1],
-    f: coeffY[2],
-  };
-}
-
-function finishCalibration() {
-  const transform = computeAffineTransform(calibrationSamples);
-  if (transform) {
-    calibrationTransform = transform;
-    calibrationPointCount = calibrationSamples.length;
-    persistCalibrationState();
-  } else {
-    console.warn("calibration solve failed; keeping previous transform");
-  }
-  calibrationActive = false;
-  setCalibrationOverlay(false);
-  calibrationSamples = [];
-  calibrationIndex = 0;
-  updateCalibrationButtons();
-  updateCalibrationStatus();
-  updateGazeCursor(latestGazeRaw);
-  scheduleRender();
-}
-
-function cancelCalibration() {
-  calibrationActive = false;
-  calibrationSamples = [];
-  calibrationIndex = 0;
-  setCalibrationOverlay(false);
-  updateCalibrationButtons();
-  updateCalibrationStatus();
-}
-
-function resetCalibration() {
-  resetCalibrationState();
-  cancelCalibration();
-  updateCalibrationStatus();
-  updateGazeCursor(latestGazeRaw);
-  scheduleRender();
-}
+// ============================================
+// WEBSOCKET
+// ============================================
 
 function connectWebSocket() {
   const socket = new WebSocket(WS_URL);
@@ -603,21 +406,15 @@ function connectWebSocket() {
 
   socket.addEventListener("open", () => {
     wsStatus.textContent = "connected";
-    void ensurePatchBuffer();
     setInterval(() => socket.readyState === 1 && socket.send("ping"), 10000);
   });
 
   socket.addEventListener("message", (event) => {
     const data = JSON.parse(event.data);
-    if (data.event === "sample") {
-      if (data.gaze && data.gaze.valid) {
-        updateGazeCursor(data.gaze);
-        updateMirrorPreview(latestGazeCalibrated);
-      }
-    } else if (data.event === "blink") {
-      if (data.state) {
-        void handleBlink(data.state);
-      }
+    if (data.event === "sample" && data.gaze?.valid) {
+      updateGazeCursor(data.gaze);
+    } else if (data.event === "blink" && data.state) {
+      handleBlink(data.state);
     }
   });
 
@@ -632,27 +429,13 @@ function connectWebSocket() {
   });
 }
 
-window.addEventListener("resize", () => {
-  resizeCanvas();
-});
+// ============================================
+// INIT
+// ============================================
 
+window.addEventListener("resize", resizeCanvas);
 window.addEventListener("load", () => {
-  loadCalibrationState();
-  updateCalibrationStatus();
-  updateCalibrationButtons();
   resizeCanvas();
-  updatePatchStatus();
   connectWebSocket();
-});
-
-startCalibrationBtn?.addEventListener("click", () => {
-  startCalibration();
-});
-
-captureCalibrationBtn?.addEventListener("click", () => {
-  addCalibrationSample();
-});
-
-resetCalibrationBtn?.addEventListener("click", () => {
-  resetCalibration();
+  loadDefaultBaseImage();
 });
