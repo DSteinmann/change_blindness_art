@@ -29,8 +29,10 @@ app.add_middleware(
 # Global state
 prompts = []
 prompt_index = 0
-sector_prompts = {}  # Sector-specific prompts
-default_prompt = "add more detail, photorealistic, seamless blend"
+sector_prompts = {}  # Sector-specific prompts (can be string or list)
+sector_prompt_indices = {}  # Track cycling index per sector
+default_prompts = ["add more detail, photorealistic, seamless blend"]
+default_prompt_index = 0
 PROMPTS_FILE = Path(__file__).parent / "prompts.txt"
 SECTOR_PROMPTS_FILE = Path(__file__).parent / "sector_prompts.json"
 
@@ -88,18 +90,32 @@ def load_prompts():
 
 
 def load_sector_prompts():
-    """Load sector-specific prompts from JSON file."""
-    global sector_prompts, default_prompt
-    
+    """Load sector-specific prompts from JSON file. Supports both string and array formats."""
+    global sector_prompts, sector_prompt_indices, default_prompts
+
     if SECTOR_PROMPTS_FILE.exists():
         try:
             with open(SECTOR_PROMPTS_FILE, 'r') as f:
                 data = json.load(f)
             sector_prompts = data.get("sectors", {})
-            default_prompt = data.get("default", default_prompt)
+
+            # Handle default as string or array
+            default_val = data.get("default", default_prompts)
+            if isinstance(default_val, str):
+                default_prompts = [default_val]
+            else:
+                default_prompts = default_val
+
+            # Initialize indices for each sector
+            for sector in sector_prompts:
+                sector_prompt_indices[sector] = 0
+
             print(f"Loaded {len(sector_prompts)} sector-specific prompts from {SECTOR_PROMPTS_FILE}")
-            for sector, prompt in sector_prompts.items():
-                print(f"  [{sector}] {prompt[:50]}...")
+            for sector, prompt_data in sector_prompts.items():
+                if isinstance(prompt_data, list):
+                    print(f"  [{sector}] {len(prompt_data)} prompts, first: {prompt_data[0][:40]}...")
+                else:
+                    print(f"  [{sector}] {prompt_data[:50]}...")
         except Exception as e:
             print(f"Error loading sector prompts: {e}")
             sector_prompts = {}
@@ -108,19 +124,37 @@ def load_sector_prompts():
 
 
 def get_prompt_for_sector(row: int, col: int) -> str:
-    """Get the prompt for a specific sector. Falls back to cycling prompts if not found."""
+    """Get the prompt for a specific sector, cycling through available prompts."""
+    global sector_prompt_indices, default_prompt_index
     name = sector_name(row, col)
-    
+
     # First try sector-specific prompt
     if name in sector_prompts:
-        return sector_prompts[name]
-    
-    # Then try cycling prompts
+        prompt_data = sector_prompts[name]
+
+        # Handle array of prompts (cycling)
+        if isinstance(prompt_data, list) and len(prompt_data) > 0:
+            # Get current index for this sector
+            idx = sector_prompt_indices.get(name, 0)
+            prompt = prompt_data[idx]
+            # Advance to next prompt for next time
+            sector_prompt_indices[name] = (idx + 1) % len(prompt_data)
+            print(f"Sector {name}: using prompt {idx + 1}/{len(prompt_data)}")
+            return prompt
+        elif isinstance(prompt_data, str):
+            return prompt_data
+
+    # Then try cycling prompts from prompts.txt
     if prompts:
         return get_next_prompt()
-    
-    # Finally fall back to default
-    return default_prompt
+
+    # Finally fall back to default (also supports cycling)
+    if default_prompts:
+        prompt = default_prompts[default_prompt_index]
+        default_prompt_index = (default_prompt_index + 1) % len(default_prompts)
+        return prompt
+
+    return "add more detail, photorealistic, seamless blend"
 
 
 def get_next_prompt():

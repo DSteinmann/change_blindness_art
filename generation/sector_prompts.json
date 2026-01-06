@@ -1,15 +1,64 @@
 {
-  "description": "Prompts for each sector. Sectors are named by row (T=top, M=middle, B=bottom) and column (L=left, C=center, R=right).",
-  "default": "add more detail, photorealistic, seamless blend",
+  "description": "Prompts for each sector with cycling support. Each sector has an array of prompts that cycle on each generation. Sectors are named by row (T=top, M=middle, B=bottom) and column (L=left, C=center, R=right).",
+  "default": [
+    "add a small detail, photorealistic, seamless blend",
+    "add something interesting, photorealistic, natural lighting",
+    "enhance with a subtle element, photorealistic"
+  ],
   "sectors": {
-    "TL": "add a small colorful bird in the upper left corner, photorealistic, natural lighting",
-    "TC": "add fluffy clouds in the upper center, photorealistic, soft lighting",
-    "TR": "add a butterfly in the upper right, photorealistic, delicate details",
-    "ML": "add green foliage on the left side, photorealistic, natural colors",
-    "MC": "enhance the center with more bananas, photorealistic, same style",
-    "MR": "add a small flower on the right side, photorealistic, vibrant colors",
-    "BL": "add fallen leaves in the lower left, photorealistic, autumn colors",
-    "BC": "add a subtle shadow in the lower center, photorealistic",
-    "BR": "add a small ladybug in the lower right corner, photorealistic, detailed"
+    "TL": [
+      "add a small colorful bird perched in the corner, photorealistic, natural lighting",
+      "add a floating soap bubble, photorealistic, iridescent reflections",
+      "add a small paper airplane, photorealistic, slight motion blur",
+      "add a tiny bee hovering, photorealistic, detailed wings"
+    ],
+    "TC": [
+      "add fluffy white clouds, photorealistic, soft lighting",
+      "add a rainbow arc, photorealistic, subtle colors",
+      "add a hot air balloon in the distance, photorealistic, miniature scale",
+      "add morning sun rays breaking through, photorealistic, golden light"
+    ],
+    "TR": [
+      "add a monarch butterfly, photorealistic, delicate wing details",
+      "add a small kite flying, photorealistic, colorful",
+      "add a dragonfly hovering, photorealistic, translucent wings",
+      "add a hummingbird in flight, photorealistic, motion blur on wings"
+    ],
+    "ML": [
+      "add green ivy leaves growing, photorealistic, natural colors",
+      "add a small potted succulent, photorealistic, detailed texture",
+      "add wildflowers blooming, photorealistic, vibrant colors",
+      "add a small fern frond, photorealistic, delicate leaves"
+    ],
+    "MC": [
+      "add another piece of fruit, photorealistic, same style as existing",
+      "slightly change the color saturation of the central object",
+      "add a subtle reflection or highlight, photorealistic",
+      "add a second similar object nearby, photorealistic, matching style"
+    ],
+    "MR": [
+      "add a small daisy flower, photorealistic, white petals yellow center",
+      "add a red poppy flower, photorealistic, delicate petals",
+      "add a purple orchid, photorealistic, elegant",
+      "add a small sunflower, photorealistic, bright yellow"
+    ],
+    "BL": [
+      "add fallen autumn leaves, photorealistic, warm colors",
+      "add small pebbles scattered, photorealistic, natural arrangement",
+      "add a tiny mushroom, photorealistic, forest floor style",
+      "add dewdrops on the surface, photorealistic, reflective"
+    ],
+    "BC": [
+      "add a subtle shadow underneath, photorealistic, soft edges",
+      "add a small puddle reflection, photorealistic, mirror-like",
+      "add scattered flower petals, photorealistic, soft colors",
+      "add a faint texture pattern, photorealistic, subtle"
+    ],
+    "BR": [
+      "add a small ladybug, photorealistic, red with black spots",
+      "add a tiny snail, photorealistic, spiral shell",
+      "add a colorful caterpillar, photorealistic, fuzzy texture",
+      "add a small grasshopper, photorealistic, green, detailed legs"
+    ]
   }
 }
