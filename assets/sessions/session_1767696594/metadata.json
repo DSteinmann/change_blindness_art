@@ -1,0 +1,22 @@
+{
+  "session_id": "session_1767696594",
+  "created_at": 1767696594.735837,
+  "sequence": [
+    {
+      "index": 0,
+      "filename": "0000_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow in the lower center, photorealistic",
+      "timestamp": 1767696614.5957537
+    },
+    {
+      "index": 1,
+      "filename": "0001_BL.png",
+      "target_sector": "BL",
+      "focus_sector": "TR",
+      "prompt": "add fallen leaves in the lower left, photorealistic, autumn colors",
+      "timestamp": 1767696632.4768121
+    }
+  ]
+}

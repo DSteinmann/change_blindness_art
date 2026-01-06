@@ -28,10 +28,13 @@ services:
       context: .
       dockerfile: docker/generation.Dockerfile
     container_name: aria-generation
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
     volumes:
       - ./assets:/app/assets:rw
+      - ./generation:/app/generation:ro
     ports:
       - "8001:8001"
     networks:

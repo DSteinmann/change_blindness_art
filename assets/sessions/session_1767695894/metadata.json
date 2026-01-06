@@ -1,0 +1,46 @@
+{
+  "session_id": "session_1767695894",
+  "created_at": 1767695894.053285,
+  "sequence": [
+    {
+      "index": 0,
+      "filename": "0000_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow in the lower center, photorealistic",
+      "timestamp": 1767695914.0790625
+    },
+    {
+      "index": 1,
+      "filename": "0001_TL.png",
+      "target_sector": "TL",
+      "focus_sector": "BR",
+      "prompt": "add a small colorful bird in the upper left corner, photorealistic, natural lighting",
+      "timestamp": 1767695915.1347413
+    },
+    {
+      "index": 2,
+      "filename": "0002_TL.png",
+      "target_sector": "TL",
+      "focus_sector": "BR",
+      "prompt": "add a small colorful bird in the upper left corner, photorealistic, natural lighting",
+      "timestamp": 1767695926.1014726
+    },
+    {
+      "index": 3,
+      "filename": "0003_TL.png",
+      "target_sector": "TL",
+      "focus_sector": "BR",
+      "prompt": "add a small colorful bird in the upper left corner, photorealistic, natural lighting",
+      "timestamp": 1767695938.1635537
+    },
+    {
+      "index": 4,
+      "filename": "0004_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow in the lower center, photorealistic",
+      "timestamp": 1767695949.9871426
+    }
+  ]
+}

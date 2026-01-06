@@ -25,4 +25,4 @@ COPY assets ./assets
 
 EXPOSE 8001
 
-CMD ["python", "generation/server.py"]
+CMD ["python", "generation/server.py", "--host", "0.0.0.0", "--port", "8001"]

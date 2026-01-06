@@ -30,7 +30,7 @@ let currentSector = { row: 1, col: 1 };  // Center
 let lastSector = { row: 1, col: 1 };
 
 // Fixation detection (per sector)
-const FIXATION_DURATION_MS = 3000;  // Reduced since sectors are more stable
+const FIXATION_DURATION_MS = 1000;  // Reduced since sectors are more stable
 let fixationStartTime = null;
 let fixatedSector = null;
 let isGenerating = false;
@@ -172,8 +172,18 @@ function sectorName(sector) {
 }
 
 function checkFixation(gaze) {
-  if (!gaze?.valid || isGenerating) {
+  // Debug: Log why we might skip
+  if (!gaze?.valid) {
+    blinkStatus.textContent = "no valid gaze";
     fixationStartTime = null;
+    return;
+  }
+  if (isGenerating) {
+    // Don't reset timer while generating, just skip check
+    return;
+  }
+  if (!capturedImageBase64) {
+    blinkStatus.textContent = "no base image";
     return;
   }
   
@@ -187,6 +197,7 @@ function checkFixation(gaze) {
     currentSector = sector;
     fixationStartTime = Date.now();
     fixatedSector = null;
+    console.log(`Sector changed to ${sectorName(sector)}`);
   } else if (fixationStartTime !== null) {
     const elapsed = Date.now() - fixationStartTime;
     const progress = Math.min(elapsed / FIXATION_DURATION_MS, 1);
@@ -194,12 +205,22 @@ function checkFixation(gaze) {
     const opposite = getOppositeSector(sector);
     blinkStatus.textContent = `${sectorName(sector)}→${sectorName(opposite)} ${(progress * 100).toFixed(0)}%`;
     
-    if (elapsed >= FIXATION_DURATION_MS && capturedImageBase64 && !fixatedSector) {
-      fixatedSector = sector;
-      triggerSectorGeneration(sector);
+    // Debug: show what's blocking generation
+    if (elapsed >= FIXATION_DURATION_MS) {
+      if (fixatedSector) {
+        blinkStatus.textContent = `${sectorName(sector)} already triggered`;
+      } else if (pendingSwap) {
+        blinkStatus.textContent = `pending swap for ${sectorName(pendingSwap.targetSector)}`;
+      } else {
+        // Trigger generation!
+        console.log(`Triggering generation for sector ${sectorName(sector)}`);
+        fixatedSector = sector;
+        triggerSectorGeneration(sector);
+      }
     }
   } else {
     fixationStartTime = Date.now();
+    console.log(`Started fixation timer for ${sectorName(sector)}`);
   }
 }
 
@@ -365,20 +386,29 @@ function isSafeToSwap() {
 }
 
 function attemptSwapOnBlink() {
-  if (!pendingSwap) return false;
+  if (!pendingSwap) {
+    console.log("No pending swap to apply");
+    return false;
+  }
   
   if (isSafeToSwap()) {
     const targetName = sectorName(pendingSwap.targetSector);
     activePatch = { image: pendingSwap.image };
     capturedImageBase64 = pendingSwap.base64;
+    
+    // Save to see what changed (optional - opens in new tab for inspection)
+    // window.open(pendingSwap.base64, '_blank');
+    
     pendingSwap = null;
     fixatedSector = null;  // Reset so we can generate again
     scheduleRender();
-    console.log(`Image swapped! Modified sector: ${targetName}`);
+    console.log(`✓ Image swapped! Modified sector: ${targetName}`);
+    blinkStatus.textContent = `swapped ${targetName}!`;
     return true;
   }
   
-  console.log(`Swap blocked - user looking at target sector ${sectorName(pendingSwap.targetSector)}`);
+  const currentGazeSector = gazeToSector(smoothedGaze);
+  console.log(`✗ Swap blocked - looking at ${sectorName(currentGazeSector)}, modified ${sectorName(pendingSwap.targetSector)}`);
   return false;
 }
 

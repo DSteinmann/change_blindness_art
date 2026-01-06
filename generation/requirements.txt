@@ -1,5 +1,6 @@
-torch
-diffusers
-transformers
-accelerate
-Pillow
+# Generation server dependencies (OpenRouter API)
+fastapi>=0.104
+uvicorn[standard]>=0.24
+pydantic>=2.0
+httpx>=0.25
+Pillow>=10.0

@@ -1,0 +1,86 @@
+{
+  "session_id": "session_1767696893",
+  "created_at": 1767696893.497512,
+  "sequence": [
+    {
+      "index": 0,
+      "filename": "0000_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow in the lower center, photorealistic",
+      "timestamp": 1767696912.6367128
+    },
+    {
+      "index": 1,
+      "filename": "0001_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow in the lower center, photorealistic",
+      "timestamp": 1767696936.3576818
+    },
+    {
+      "index": 2,
+      "filename": "0002_ML.png",
+      "target_sector": "ML",
+      "focus_sector": "MR",
+      "prompt": "add green foliage on the left side, photorealistic, natural colors",
+      "timestamp": 1767696975.8117797
+    },
+    {
+      "index": 3,
+      "filename": "0003_BR.png",
+      "target_sector": "BR",
+      "focus_sector": "TL",
+      "prompt": "add a small ladybug in the lower right corner, photorealistic, detailed",
+      "timestamp": 1767696995.5219662
+    },
+    {
+      "index": 4,
+      "filename": "0004_ML.png",
+      "target_sector": "ML",
+      "focus_sector": "MR",
+      "prompt": "add green foliage on the left side, photorealistic, natural colors",
+      "timestamp": 1767697008.5591116
+    },
+    {
+      "index": 5,
+      "filename": "0005_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow in the lower center, photorealistic",
+      "timestamp": 1767697013.8141067
+    },
+    {
+      "index": 6,
+      "filename": "0006_BR.png",
+      "target_sector": "BR",
+      "focus_sector": "TL",
+      "prompt": "add a small ladybug in the lower right corner, photorealistic, detailed",
+      "timestamp": 1767697027.4247546
+    },
+    {
+      "index": 7,
+      "filename": "0007_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a butterfly in the upper right, photorealistic, delicate details",
+      "timestamp": 1767697045.6875086
+    },
+    {
+      "index": 8,
+      "filename": "0008_BL.png",
+      "target_sector": "BL",
+      "focus_sector": "TR",
+      "prompt": "add fallen leaves in the lower left, photorealistic, autumn colors",
+      "timestamp": 1767697059.7370334
+    },
+    {
+      "index": 9,
+      "filename": "0009_BR.png",
+      "target_sector": "BR",
+      "focus_sector": "TL",
+      "prompt": "add a small ladybug in the lower right corner, photorealistic, detailed",
+      "timestamp": 1767697077.250218
+    }
+  ]
+}
