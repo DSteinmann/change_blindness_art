@@ -2,6 +2,9 @@ const API_ROOT = window.API_ROOT || "http://localhost:8000";
 const WS_URL = API_ROOT.replace("http", "ws") + "/ws/stream";
 const GENERATION_API = window.GENERATION_API || "http://localhost:8001";
 
+// Debug mode - toggle with ?debug=true in URL or press 'D' key
+let debugMode = new URLSearchParams(window.location.search).get('debug') === 'true';
+
 // DOM Elements
 const canvasWrapper = document.querySelector(".canvas-wrapper");
 const wsStatus = document.getElementById("ws-status");
@@ -110,16 +113,38 @@ function renderScene() {
 
 function updateViewportGazeCursor(gaze) {
   if (!viewportGazeCursor) return;
-  
+
+  // Always update smoothed gaze for internal tracking
   if (gaze?.valid) {
     smoothedGaze.x_norm += SMOOTHING_FACTOR * (gaze.x_norm - smoothedGaze.x_norm);
     smoothedGaze.y_norm += SMOOTHING_FACTOR * (gaze.y_norm - smoothedGaze.y_norm);
-    
-    viewportGazeCursor.style.left = `${smoothedGaze.x_norm * window.innerWidth}px`;
-    viewportGazeCursor.style.top = `${smoothedGaze.y_norm * window.innerHeight}px`;
-    viewportGazeCursor.style.display = "block";
+
+    // Only show cursor in debug mode
+    if (debugMode) {
+      viewportGazeCursor.style.left = `${smoothedGaze.x_norm * window.innerWidth}px`;
+      viewportGazeCursor.style.top = `${smoothedGaze.y_norm * window.innerHeight}px`;
+      viewportGazeCursor.style.display = "block";
+    } else {
+      viewportGazeCursor.style.display = "none";
+    }
   } else {
     viewportGazeCursor.style.display = "none";
+  }
+}
+
+function toggleDebugMode() {
+  debugMode = !debugMode;
+  console.log(`Debug mode: ${debugMode ? 'ON' : 'OFF'}`);
+
+  // Update cursor visibility
+  if (!debugMode && viewportGazeCursor) {
+    viewportGazeCursor.style.display = "none";
+  }
+
+  // Update sidebar visibility
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) {
+    sidebar.style.display = debugMode ? 'flex' : 'none';
   }
 }
 
@@ -150,6 +175,20 @@ function gazeToSector(gaze) {
 
 // Get the opposite sector
 function getOppositeSector(sector) {
+  // Special case: center (MC) maps to a random corner
+  // This avoids modifying the exact area the user is looking at
+  if (sector.row === 1 && sector.col === 1) {
+    const corners = [
+      { row: 0, col: 0 },  // TL
+      { row: 0, col: 2 },  // TR
+      { row: 2, col: 0 },  // BL
+      { row: 2, col: 2 }   // BR
+    ];
+    const randomCorner = corners[Math.floor(Math.random() * corners.length)];
+    console.log(`Center fixation → random corner: ${sectorName(randomCorner)}`);
+    return randomCorner;
+  }
+
   return {
     row: (GRID_SIZE - 1) - sector.row,
     col: (GRID_SIZE - 1) - sector.col
@@ -468,4 +507,24 @@ window.addEventListener("load", () => {
   resizeCanvas();
   connectWebSocket();
   loadDefaultBaseImage();
+
+  // Set initial debug mode visibility
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar && !debugMode) {
+    sidebar.style.display = 'none';
+  }
+  if (viewportGazeCursor && !debugMode) {
+    viewportGazeCursor.style.display = 'none';
+  }
+
+  console.log(`Debug mode: ${debugMode ? 'ON' : 'OFF'} (press 'D' to toggle, or add ?debug=true to URL)`);
+});
+
+// Toggle debug mode with 'D' key
+window.addEventListener("keydown", (event) => {
+  if (event.key === 'd' || event.key === 'D') {
+    // Ignore if user is typing in an input field
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+    toggleDebugMode();
+  }
 });

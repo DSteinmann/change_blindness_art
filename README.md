@@ -234,6 +234,21 @@ const FIXATION_DURATION_MS = 1000; // Time before triggering generation
 const SMOOTHING_FACTOR = 0.08;     // Gaze cursor smoothing (lower = smoother)
 ```
 
+### Debug Mode
+
+The frontend includes a debug mode for development and calibration. When disabled (default), participants see only the stimulus image for a clean experiment view.
+
+**Toggle debug mode:**
+- **URL parameter**: `http://localhost:8080?debug=true`
+- **Keyboard**: Press `D` to toggle on/off
+
+| Element | Debug OFF (default) | Debug ON |
+|---------|---------------------|----------|
+| Gaze cursor | Hidden | Visible |
+| Sidebar stats | Hidden | Visible |
+
+**Note**: The center sector (MC) maps to a random corner when fixated, ensuring changes always occur in peripheral vision.
+
 ---
 
 ## Architecture
