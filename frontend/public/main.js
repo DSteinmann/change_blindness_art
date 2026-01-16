@@ -7,10 +7,6 @@ let debugMode = new URLSearchParams(window.location.search).get('debug') === 'tr
 
 // DOM Elements
 const canvasWrapper = document.querySelector(".canvas-wrapper");
-const wsStatus = document.getElementById("ws-status");
-const blinkStatus = document.getElementById("blink-status");
-const gazeStatus = document.getElementById("gaze-status");
-const mirrorStatus = document.getElementById("mirror-status");
 const sceneCanvas = document.getElementById("scene-canvas");
 const sceneCtx = sceneCanvas.getContext("2d");
 const viewportGazeCursor = document.getElementById("viewport-gaze-cursor");
@@ -137,27 +133,21 @@ function toggleDebugMode() {
   console.log(`Debug mode: ${debugMode ? 'ON' : 'OFF'}`);
 
   // Update cursor visibility
-  if (!debugMode && viewportGazeCursor) {
-    viewportGazeCursor.style.display = "none";
-  }
-
-  // Update sidebar visibility
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebar) {
-    sidebar.style.display = debugMode ? 'flex' : 'none';
+  if (viewportGazeCursor) {
+    if (debugMode) {
+      // Show cursor at current smoothed position
+      viewportGazeCursor.style.left = `${smoothedGaze.x_norm * window.innerWidth}px`;
+      viewportGazeCursor.style.top = `${smoothedGaze.y_norm * window.innerHeight}px`;
+      viewportGazeCursor.style.display = "block";
+    } else {
+      viewportGazeCursor.style.display = "none";
+    }
   }
 }
 
 function updateGazeCursor(gaze) {
   latestGazeRaw = gaze;
   updateViewportGazeCursor(gaze);
-  
-  gazeStatus.textContent = `${gaze.x_norm.toFixed(2)}, ${gaze.y_norm.toFixed(2)}`;
-  
-  // Show opposite (target) region
-  const mirror = { x: 1 - gaze.x_norm, y: 1 - gaze.y_norm };
-  mirrorStatus.textContent = `${mirror.x.toFixed(2)}, ${mirror.y.toFixed(2)}`;
-  
   checkFixation(gaze);
   scheduleRender();
 }
@@ -211,25 +201,21 @@ function sectorName(sector) {
 }
 
 function checkFixation(gaze) {
-  // Debug: Log why we might skip
   if (!gaze?.valid) {
-    blinkStatus.textContent = "no valid gaze";
     fixationStartTime = null;
     return;
   }
   if (isGenerating) {
-    // Don't reset timer while generating, just skip check
     return;
   }
   if (!capturedImageBase64) {
-    blinkStatus.textContent = "no base image";
     return;
   }
-  
+
   // Determine which sector the gaze is in
   const sector = gazeToSector(smoothedGaze);  // Use smoothed for stability
   const sectorChanged = sector.row !== currentSector.row || sector.col !== currentSector.col;
-  
+
   if (sectorChanged) {
     // Reset fixation timer when sector changes
     lastSector = currentSector;
@@ -239,18 +225,9 @@ function checkFixation(gaze) {
     console.log(`Sector changed to ${sectorName(sector)}`);
   } else if (fixationStartTime !== null) {
     const elapsed = Date.now() - fixationStartTime;
-    const progress = Math.min(elapsed / FIXATION_DURATION_MS, 1);
-    
-    const opposite = getOppositeSector(sector);
-    blinkStatus.textContent = `${sectorName(sector)}→${sectorName(opposite)} ${(progress * 100).toFixed(0)}%`;
-    
-    // Debug: show what's blocking generation
+
     if (elapsed >= FIXATION_DURATION_MS) {
-      if (fixatedSector) {
-        blinkStatus.textContent = `${sectorName(sector)} already triggered`;
-      } else if (pendingSwap) {
-        blinkStatus.textContent = `pending swap for ${sectorName(pendingSwap.targetSector)}`;
-      } else {
+      if (!fixatedSector && !pendingSwap) {
         // Trigger generation!
         console.log(`Triggering generation for sector ${sectorName(sector)}`);
         fixatedSector = sector;
@@ -265,21 +242,17 @@ function checkFixation(gaze) {
 
 async function triggerSectorGeneration(focusSector) {
   if (isGenerating || pendingSwap) return;
-  
+
   isGenerating = true;
   const oppositeSector = getOppositeSector(focusSector);
-  blinkStatus.textContent = `generating ${sectorName(oppositeSector)}...`;
-  
   console.log(`Fixation in ${sectorName(focusSector)}, will modify ${sectorName(oppositeSector)}`);
-  
+
   try {
     await generateForSector(focusSector, oppositeSector);
-    blinkStatus.textContent = pendingSwap ? `${sectorName(oppositeSector)} ready` : "ready";
   } catch (err) {
     console.error("Generation error:", err);
-    blinkStatus.textContent = "error";
   }
-  
+
   setTimeout(() => { isGenerating = false; }, 1000);
 }
 
@@ -429,23 +402,19 @@ function attemptSwapOnBlink() {
     console.log("No pending swap to apply");
     return false;
   }
-  
+
   if (isSafeToSwap()) {
     const targetName = sectorName(pendingSwap.targetSector);
     activePatch = { image: pendingSwap.image };
     capturedImageBase64 = pendingSwap.base64;
-    
-    // Save to see what changed (optional - opens in new tab for inspection)
-    // window.open(pendingSwap.base64, '_blank');
-    
+
     pendingSwap = null;
     fixatedSector = null;  // Reset so we can generate again
     scheduleRender();
     console.log(`✓ Image swapped! Modified sector: ${targetName}`);
-    blinkStatus.textContent = `swapped ${targetName}!`;
     return true;
   }
-  
+
   const currentGazeSector = gazeToSector(smoothedGaze);
   console.log(`✗ Swap blocked - looking at ${sectorName(currentGazeSector)}, modified ${sectorName(pendingSwap.targetSector)}`);
   return false;
@@ -454,13 +423,8 @@ function attemptSwapOnBlink() {
 function handleBlink(state) {
   if (lastBlinkState !== "closed" && state === "closed") {
     if (pendingSwap) {
-      const swapped = attemptSwapOnBlink();
-      blinkStatus.textContent = swapped ? "swapped!" : "blocked";
-    } else {
-      blinkStatus.textContent = "no pending";
+      attemptSwapOnBlink();
     }
-  } else if (state === "open") {
-    blinkStatus.textContent = pendingSwap ? "ready (pending)" : "ready";
   }
   lastBlinkState = state;
 }
@@ -471,10 +435,10 @@ function handleBlink(state) {
 
 function connectWebSocket() {
   const socket = new WebSocket(WS_URL);
-  wsStatus.textContent = "connecting";
+  console.log("WebSocket connecting...");
 
   socket.addEventListener("open", () => {
-    wsStatus.textContent = "connected";
+    console.log("WebSocket connected");
     setInterval(() => socket.readyState === 1 && socket.send("ping"), 10000);
   });
 
@@ -488,12 +452,12 @@ function connectWebSocket() {
   });
 
   socket.addEventListener("close", () => {
-    wsStatus.textContent = "disconnected";
+    console.log("WebSocket disconnected, reconnecting...");
     setTimeout(connectWebSocket, 1000);
   });
 
   socket.addEventListener("error", () => {
-    wsStatus.textContent = "error";
+    console.error("WebSocket error");
     socket.close();
   });
 }
@@ -509,22 +473,28 @@ window.addEventListener("load", () => {
   loadDefaultBaseImage();
 
   // Set initial debug mode visibility
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebar && !debugMode) {
-    sidebar.style.display = 'none';
-  }
-  if (viewportGazeCursor && !debugMode) {
-    viewportGazeCursor.style.display = 'none';
+  if (viewportGazeCursor) {
+    if (debugMode) {
+      // Show cursor at center initially
+      viewportGazeCursor.style.left = `${window.innerWidth / 2}px`;
+      viewportGazeCursor.style.top = `${window.innerHeight / 2}px`;
+      viewportGazeCursor.style.display = 'block';
+    } else {
+      viewportGazeCursor.style.display = 'none';
+    }
   }
 
   console.log(`Debug mode: ${debugMode ? 'ON' : 'OFF'} (press 'D' to toggle, or add ?debug=true to URL)`);
 });
 
 // Toggle debug mode with 'D' key
-window.addEventListener("keydown", (event) => {
+document.addEventListener("keydown", (event) => {
+  console.log("Key pressed:", event.key);
   if (event.key === 'd' || event.key === 'D') {
     // Ignore if user is typing in an input field
     if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
     toggleDebugMode();
   }
 });
+
+console.log("main.js loaded - press 'D' to toggle debug mode");
