@@ -1,9 +1,16 @@
 """Per-session state for the semantic generation mode."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from typing import Tuple
+
+from PIL import Image
+
+from openrouter import _extract_image
 
 HISTORY_WINDOW = 5
+CAPTION_PREFIX = "CAPTION:"
 
 
 @dataclass
@@ -81,3 +88,31 @@ def build_prompt(
         {"type": "image_url", "image_url": {"url": current_b64}},
         {"type": "text", "text": instruction},
     ]
+
+
+def _extract_caption(content) -> str | None:
+    if isinstance(content, str):
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith(CAPTION_PREFIX):
+                return line[len(CAPTION_PREFIX):].strip() or None
+        return None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                captured = _extract_caption(item.get("text", ""))
+                if captured:
+                    return captured
+    return None
+
+
+def parse_response(message: dict) -> Tuple[Image.Image | None, str | None]:
+    """Return `(image_or_none, caption_or_none)` from a chat-completion message."""
+    image = _extract_image(message)
+    caption = _extract_caption(message.get("content", ""))
+    return image, caption
+
+
+def degenerate_caption(index: int, sector_name: str) -> str:
+    """Fallback caption when the model returned an image but no CAPTION line."""
+    return f"edit {index} in {sector_name} at {time.strftime('%H:%M:%S')}"

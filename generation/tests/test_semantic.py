@@ -1,7 +1,9 @@
 """Tests for generation/semantic.py."""
 from __future__ import annotations
 
-from semantic import SemanticHistory, build_prompt
+from PIL import Image
+
+from semantic import SemanticHistory, build_prompt, degenerate_caption, parse_response
 
 
 def test_history_empty_for_unknown_session():
@@ -86,3 +88,37 @@ def test_build_prompt_lists_captions_in_order(tiny_png_b64):
 def test_build_prompt_says_no_prior_edits_when_empty(tiny_png_b64):
     text = build_prompt(tiny_png_b64, tiny_png_b64, [], (0, 0, 1, 1), "TL")[2]["text"]
     assert "No prior edits yet" in text
+
+
+def test_parse_response_extracts_image_and_caption(fake_openrouter_response):
+    resp = fake_openrouter_response("added a rainbow glow")
+    image, caption = parse_response(resp["choices"][0]["message"])
+    assert isinstance(image, Image.Image)
+    assert caption == "added a rainbow glow"
+
+
+def test_parse_response_without_caption_returns_none_caption(fake_openrouter_response):
+    resp = fake_openrouter_response(caption=None)
+    image, caption = parse_response(resp["choices"][0]["message"])
+    assert image is not None
+    assert caption is None
+
+
+def test_parse_response_missing_image_returns_none_image():
+    image, caption = parse_response({"content": "CAPTION: nothing"})
+    assert image is None
+    assert caption == "nothing"
+
+
+def test_parse_response_handles_list_content_with_caption(fake_openrouter_response):
+    resp = fake_openrouter_response("the fern uncurled")
+    message = resp["choices"][0]["message"]
+    message["content"] = [{"type": "text", "text": "CAPTION: the fern uncurled"}]
+    image, caption = parse_response(message)
+    assert caption == "the fern uncurled"
+
+
+def test_degenerate_caption_is_non_empty():
+    c = degenerate_caption(index=4, sector_name="TL")
+    assert "TL" in c
+    assert "4" in c
