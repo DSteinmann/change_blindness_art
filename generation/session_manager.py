@@ -96,9 +96,9 @@ class SessionManager:
         self.metadata["sequence"].append(entry)
         self._save_metadata()
 
-        self.sequence_index += 1
         lat = f", {latency_ms:.0f}ms" if latency_ms is not None else ""
-        print(f"Saved generation {self.sequence_index}: {sector_name}{lat}")
+        print(f"Saved generation {entry['index']}: {sector_name}{lat}")
+        self.sequence_index += 1
         return entry
     
     def _save_metadata(self):

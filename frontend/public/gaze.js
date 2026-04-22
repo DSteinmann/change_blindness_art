@@ -40,12 +40,12 @@ export class GazeStream extends EventTarget {
 
   #updateCursor(gaze) {
     if (!viewportGazeCursor) return;
-    if (gaze?.valid && this.debugMode) {
-      viewportGazeCursor.style.left = `${this.smoothed.x_norm * window.innerWidth}px`;
-      viewportGazeCursor.style.top = `${this.smoothed.y_norm * window.innerHeight}px`;
-      viewportGazeCursor.style.display = "block";
-    } else if (!this.debugMode) {
+    if (!this.debugMode || !gaze?.valid) {
       viewportGazeCursor.style.display = "none";
+      return;
     }
+    viewportGazeCursor.style.left = `${this.smoothed.x_norm * window.innerWidth}px`;
+    viewportGazeCursor.style.top = `${this.smoothed.y_norm * window.innerHeight}px`;
+    viewportGazeCursor.style.display = "block";
   }
 }

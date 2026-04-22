@@ -108,7 +108,6 @@ class PupilSource:
 
         last_log = time.monotonic()
         last_gaze_emit = time.monotonic()
-        last_valid_emit = time.monotonic()
         samples_forwarded = 0
         surface_samples = 0
         heartbeat_interval = 0.1  # Emit invalid sample if no gaze for this long
@@ -118,9 +117,6 @@ class PupilSource:
                 socks = dict(poller.poll(timeout=100))
             except zmq.ZMQError:
                 break
-
-            if not socks:
-                continue
 
             # Prefer surface gaze data (already mapped to screen by Pupil Capture)
             if surface_socket in socks:
@@ -171,8 +167,6 @@ class PupilSource:
                             samples_forwarded += 1
                             surface_samples += 1
                             last_gaze_emit = time.monotonic()
-                            if valid:
-                                last_valid_emit = last_gaze_emit
 
                         # If the surface message carried zero gaze points, the user's gaze
                         # is off-surface or the tracker lost the eye — emit an invalid

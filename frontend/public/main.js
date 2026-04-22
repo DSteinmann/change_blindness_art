@@ -1,5 +1,5 @@
 import { API_ROOT, WS_URL, loadRuntimeConfig } from "./config.js";
-import { resizeCanvas, setActivePatch } from "./rendering.js";
+import { resizeCanvas } from "./rendering.js";
 import { GazeStream } from "./gaze.js";
 import { FixationTracker } from "./fixation.js";
 import { GenerationController } from "./generation.js";
@@ -28,9 +28,10 @@ async function loadDefaultBaseImage(controller) {
 
 function connectWebSocket(onSample, onBlink) {
   const socket = new WebSocket(WS_URL);
+  let pingInterval = null;
   socket.addEventListener("open", () => {
     console.log("WebSocket connected");
-    setInterval(() => socket.readyState === 1 && socket.send("ping"), 10000);
+    pingInterval = setInterval(() => socket.readyState === 1 && socket.send("ping"), 10000);
   });
   socket.addEventListener("message", (event) => {
     const data = JSON.parse(event.data);
@@ -38,6 +39,7 @@ function connectWebSocket(onSample, onBlink) {
     else if (data.event === "blink" && data.state) onBlink(data.state);
   });
   socket.addEventListener("close", () => {
+    if (pingInterval !== null) clearInterval(pingInterval);
     console.log("WebSocket disconnected, reconnecting...");
     setTimeout(() => connectWebSocket(onSample, onBlink), 1000);
   });

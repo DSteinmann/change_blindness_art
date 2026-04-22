@@ -104,11 +104,6 @@ async def reset_prompt_index() -> dict:
     return {"message": "Prompt indices reset"}
 
 
-class StartSessionRequest(BaseModel):
-    session_id: Optional[str] = None
-    participant_id: Optional[str] = None
-
-
 class CalibrationRequest(BaseModel):
     samples: int
     accuracy: Optional[float] = None
@@ -116,14 +111,16 @@ class CalibrationRequest(BaseModel):
 
 
 @app.post("/session/start")
-async def start_session(req: Optional[StartSessionRequest] = None) -> dict:
-    req = req or StartSessionRequest()
+async def start_session(
+    session_id: Optional[str] = None,
+    participant_id: Optional[str] = None,
+) -> dict:
     sid = session_manager.start_new_session(
-        session_id=req.session_id,
-        participant_id=req.participant_id,
+        session_id=session_id,
+        participant_id=participant_id,
         runtime=_runtime_snapshot(),
     )
-    return {"session_id": sid, "status": "recording", "participant_id": req.participant_id}
+    return {"session_id": sid, "status": "recording", "participant_id": participant_id}
 
 
 @app.post("/session/blink")
