@@ -23,6 +23,13 @@ class Settings:
     pupil_confidence_threshold: float = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"))
     pupil_surface_name: str = os.getenv("PUPIL_SURFACE_NAME", "screen")
 
+    # Shared gaze/fixation spec — consumed by both backend and frontend via /config.
+    grid_size: int = int(os.getenv("GRID_SIZE", "3"))
+    fixation_duration_ms: int = int(os.getenv("FIXATION_DURATION_MS", "1000"))
+    gaze_smoothing_factor: float = float(os.getenv("GAZE_SMOOTHING_FACTOR", "0.08"))
+    gaze_stale_ms: int = int(os.getenv("GAZE_STALE_MS", "250"))
+    generation_api: str = os.getenv("GENERATION_API", "http://localhost:8001")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

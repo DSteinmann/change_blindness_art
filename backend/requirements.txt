@@ -2,10 +2,4 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 pyzmq>=25.1
 msgpack>=1.0
-torch
-diffusers
-transformers
-accelerate
-Pillow
-opencv-python
-real-time-screen-gaze
+httpx>=0.25

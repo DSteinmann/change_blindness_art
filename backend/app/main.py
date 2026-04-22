@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -31,13 +32,31 @@ app.mount("/assets", StaticFiles(directory=str(settings.patch_dir)), name="asset
 
 stream_hub = StreamHub(history_size=settings.telemetry_history)
 patch_manager = PatchManager(settings.patch_dir)
-pupil_source = PupilSource(settings, stream_hub.broadcast)
 patch_usage_log: list[dict[str, Any]] = []
+
+_relay_client: httpx.AsyncClient | None = None
+
+
+async def _relay_blink_onset(state: str) -> None:
+    """Fire-and-forget POST so the generation service can increment its
+    per-session blink counter. Swallow failures — blink recording is telemetry,
+    not load-bearing."""
+    if _relay_client is None:
+        return
+    try:
+        await _relay_client.post(f"{settings.generation_api}/session/blink", timeout=2.0)
+    except Exception as exc:
+        logger.debug("blink relay failed: %s", exc)
+
+
+pupil_source = PupilSource(settings, stream_hub.broadcast, on_blink_onset=_relay_blink_onset)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
+    global _relay_client
     logger.info("Starting backend...")
+    _relay_client = httpx.AsyncClient()
     await patch_manager.load()
     await pupil_source.start()
 
@@ -46,6 +65,21 @@ async def _startup() -> None:
 async def _shutdown() -> None:
     logger.info("Stopping backend")
     await pupil_source.stop()
+    if _relay_client is not None:
+        await _relay_client.aclose()
+
+
+@app.get("/config")
+async def runtime_config() -> dict[str, Any]:
+    """Shared runtime spec consumed by the frontend on load."""
+    return {
+        "grid_size": settings.grid_size,
+        "fixation_duration_ms": settings.fixation_duration_ms,
+        "gaze_smoothing_factor": settings.gaze_smoothing_factor,
+        "gaze_stale_ms": settings.gaze_stale_ms,
+        "generation_api": settings.generation_api,
+        "surface_name": settings.pupil_surface_name,
+    }
 
 
 @app.get("/healthz")

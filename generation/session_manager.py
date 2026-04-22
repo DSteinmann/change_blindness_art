@@ -20,56 +20,85 @@ class SessionManager:
         self.sequence_index = 0
         self.metadata: Dict = {}
         
-    def start_new_session(self, session_id: Optional[str] = None) -> str:
-        """Start a new recording session."""
+    def start_new_session(
+        self,
+        session_id: Optional[str] = None,
+        participant_id: Optional[str] = None,
+        runtime: Optional[Dict] = None,
+    ) -> str:
+        """Start a new recording session.
+
+        `runtime` is an optional snapshot of the config at the moment of recording
+        (model name, surface name, pupil confidence threshold, grid size, etc.)
+        which makes replays reproducible even if the code or env changes.
+        """
         if session_id is None:
             session_id = f"session_{int(time.time())}"
-        
+
         self.current_session_id = session_id
         self.current_session_dir = self.sessions_dir / session_id
         self.current_session_dir.mkdir(parents=True, exist_ok=True)
         self.sequence_index = 0
-        
+
         self.metadata = {
             "session_id": session_id,
             "created_at": time.time(),
-            "sequence": []
+            "participant_id": participant_id,
+            "runtime": runtime or {},
+            "stats": {"blink_count": 0, "frame_drops": 0},
+            "calibration": None,
+            "sequence": [],
         }
-        
+
         self._save_metadata()
-        print(f"Started session: {session_id}")
+        print(f"Started session: {session_id} (participant={participant_id})")
         return session_id
-    
-    def save_generation(self, 
-                       image: Image.Image, 
-                       sector_name: str,
-                       prompt: str,
-                       focus_sector: str) -> Dict:
+
+    def record_blink(self) -> None:
+        if not self.current_session_dir:
+            return
+        self.metadata.setdefault("stats", {"blink_count": 0, "frame_drops": 0})
+        self.metadata["stats"]["blink_count"] = self.metadata["stats"].get("blink_count", 0) + 1
+        self._save_metadata()
+
+    def record_calibration(self, calibration: Dict) -> None:
+        if not self.current_session_dir:
+            return
+        self.metadata["calibration"] = calibration
+        self._save_metadata()
+
+    def save_generation(
+        self,
+        image: Image.Image,
+        sector_name: str,
+        prompt: str,
+        focus_sector: str,
+        latency_ms: Optional[float] = None,
+    ) -> Dict:
         """Save a generated image and its metadata."""
         if not self.current_session_dir:
             raise ValueError("No active session. Call start_new_session() first.")
-        
-        # Save image
+
         filename = f"{self.sequence_index:04d}_{sector_name}.png"
         image_path = self.current_session_dir / filename
         image.save(image_path, "PNG")
-        
-        # Create metadata entry
+
         entry = {
             "index": self.sequence_index,
             "filename": filename,
             "target_sector": sector_name,
             "focus_sector": focus_sector,
             "prompt": prompt,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "latency_ms": latency_ms,
         }
-        
+
         self.metadata["sequence"].append(entry)
         self._save_metadata()
-        
+
         self.sequence_index += 1
-        print(f"Saved generation {self.sequence_index}: {sector_name}")
-        
+        lat = f", {latency_ms:.0f}ms" if latency_ms is not None else ""
+        print(f"Saved generation {self.sequence_index}: {sector_name}{lat}")
         return entry
     
     def _save_metadata(self):
