@@ -1,0 +1,22 @@
+{
+  "session_id": "session_1776769015",
+  "created_at": 1776769015.3982124,
+  "sequence": [
+    {
+      "index": 0,
+      "filename": "0000_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a monarch butterfly, photorealistic, delicate wing details",
+      "timestamp": 1776769094.9933152
+    },
+    {
+      "index": 1,
+      "filename": "0001_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a small kite flying, photorealistic, colorful",
+      "timestamp": 1776769110.3422735
+    }
+  ]
+}

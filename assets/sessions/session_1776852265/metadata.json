@@ -1,0 +1,28 @@
+{
+  "session_id": "session_1776852265",
+  "created_at": 1776852265.4570963,
+  "participant_id": null,
+  "runtime": {
+    "image_model": "google/gemini-3.1-flash-image-preview",
+    "pupil_surface_name": "screen",
+    "pupil_confidence_threshold": 0.6,
+    "grid_size": 3,
+    "prompts_file_sha": null
+  },
+  "stats": {
+    "blink_count": 0,
+    "frame_drops": 0
+  },
+  "calibration": null,
+  "sequence": [
+    {
+      "index": 0,
+      "filename": "0000_BR.png",
+      "target_sector": "BR",
+      "focus_sector": "TL",
+      "prompt": "add a small ladybug, photorealistic, red with black spots",
+      "timestamp": 1776852305.171744,
+      "latency_ms": 16942.444174000004
+    }
+  ]
+}

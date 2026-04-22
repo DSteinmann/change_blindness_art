@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from contextlib import suppress
-from typing import Callable
+from typing import Awaitable, Callable, Optional
 
 import msgpack  # type: ignore
 import zmq
@@ -29,19 +29,38 @@ class PupilSource:
     We convert to screen coords:     (0,0) = top-left,    (1,1) = bottom-right
     """
     
-    def __init__(self, settings: Settings, broadcast_callback: Callable):
+    def __init__(
+        self,
+        settings: Settings,
+        broadcast_callback: Callable,
+        on_blink_onset: Optional[Callable[[str], Awaitable[None]]] = None,
+    ):
         self._settings = settings
         self._broadcast = broadcast_callback
+        self._on_blink_onset = on_blink_onset
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, name="pupil-core-source", daemon=True)
+        self._loop: asyncio.AbstractEventLoop | None = None
         # Name of the surface defined in Pupil Capture's Surface Tracker
         self.surface_name = settings.pupil_surface_name if hasattr(settings, 'pupil_surface_name') else "screen"
 
     async def start(self):
         logger.info("Starting Pupil Core source...")
         logger.info(f"Surface name for gaze mapping: '{self.surface_name}'")
+        self._loop = asyncio.get_running_loop()
         self._stop_event.clear()
         self._thread.start()
+
+    def _dispatch(self, payload: dict) -> None:
+        """Schedule broadcast on the FastAPI event loop from this worker thread."""
+        if self._loop is None or self._loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(self._broadcast(payload), self._loop)
+
+    def _dispatch_blink_onset(self, state: str) -> None:
+        if self._on_blink_onset is None or self._loop is None or self._loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(self._on_blink_onset(state), self._loop)
 
     async def stop(self):
         logger.info("Stopping Pupil Core source...")
@@ -88,17 +107,16 @@ class PupilSource:
         poller.register(blink_socket, zmq.POLLIN)
 
         last_log = time.monotonic()
+        last_gaze_emit = time.monotonic()
         samples_forwarded = 0
         surface_samples = 0
+        heartbeat_interval = 0.1  # Emit invalid sample if no gaze for this long
 
         while not self._stop_event.is_set():
             try:
                 socks = dict(poller.poll(timeout=100))
             except zmq.ZMQError:
                 break
-
-            if not socks:
-                continue
 
             # Prefer surface gaze data (already mapped to screen by Pupil Capture)
             if surface_socket in socks:
@@ -116,11 +134,20 @@ class PupilSource:
                         surface_name = surface_obj.get("name", "unknown")
                         if surface_samples < 5:
                             logger.info(f"Surface message: name='{surface_name}', keys={list(surface_obj.keys())}")
-                        
+
                         # Surface data structure from Pupil Core:
                         # - name: surface name
                         # - gaze_on_surfaces: list of [{norm_pos: [x,y], confidence: float, ...}]
-                        gaze_on_surfaces = surface_obj.get("gaze_on_surfaces", [])
+                        gaze_on_surfaces = surface_obj.get("gaze_on_surfaces") or []
+                        fixations_on_surfaces = surface_obj.get("fixations_on_surfaces") or []
+                        # Diagnostic: log list sizes for the first 20 messages and
+                        # periodically thereafter so we can tell when Pupil stops
+                        # mapping gaze to the surface.
+                        if surface_samples < 20 or surface_samples % 60 == 0:
+                            logger.info(
+                                f"surface='{surface_name}' gaze_pts={len(gaze_on_surfaces)} "
+                                f"fix_pts={len(fixations_on_surfaces)}"
+                            )
                         for gaze_pt in gaze_on_surfaces:
                             norm_pos = gaze_pt.get("norm_pos", [0.5, 0.5])
                             confidence = float(gaze_pt.get("confidence", 0.0))
@@ -136,9 +163,23 @@ class PupilSource:
                             ts = float(gaze_pt.get("timestamp", time.time()))
                             
                             gaze_payload = {"x_norm": x_norm, "y_norm": y_norm, "valid": valid}
-                            asyncio.run(self._broadcast({"ts": ts, "event": "sample", "gaze": gaze_payload}))
+                            self._dispatch({"ts": ts, "event": "sample", "gaze": gaze_payload})
                             samples_forwarded += 1
                             surface_samples += 1
+                            last_gaze_emit = time.monotonic()
+
+                        # If the surface message carried zero gaze points, the user's gaze
+                        # is off-surface or the tracker lost the eye — emit an invalid
+                        # sample so the frontend can reset its fixation state.
+                        if not gaze_on_surfaces:
+                            now = time.monotonic()
+                            if now - last_gaze_emit >= heartbeat_interval:
+                                self._dispatch({
+                                    "ts": time.time(),
+                                    "event": "sample",
+                                    "gaze": {"x_norm": 0.5, "y_norm": 0.5, "valid": False},
+                                })
+                                last_gaze_emit = now
 
             if blink_socket in socks:
                 frames = blink_socket.recv_multipart(flags=zmq.NOBLOCK)
@@ -149,9 +190,22 @@ class PupilSource:
                         blink_state = "closed" if blink_type == "onset" else "open"
                         ts_raw = blink_obj.get("timestamp") or blink_obj.get("timestamp_epoch")
                         ts = float(ts_raw) if ts_raw is not None else time.time()
-                        asyncio.run(self._broadcast({"ts": ts, "event": "blink", "state": blink_state}))
+                        self._dispatch({"ts": ts, "event": "blink", "state": blink_state})
+                        if blink_state == "closed":
+                            self._dispatch_blink_onset(blink_state)
 
             now = time.monotonic()
+            # Heartbeat: if no gaze sample has been emitted recently, push an
+            # invalid one so the frontend can clear stale fixations when the
+            # Surface Tracker stops publishing (eye lost, off-surface, etc.).
+            if now - last_gaze_emit >= heartbeat_interval:
+                self._dispatch({
+                    "ts": time.time(),
+                    "event": "sample",
+                    "gaze": {"x_norm": 0.5, "y_norm": 0.5, "valid": False},
+                })
+                last_gaze_emit = now
+
             if now - last_log >= 5:
                 if surface_samples > 0:
                     source = f"surface '{self.surface_name}' ({surface_samples} pts)"

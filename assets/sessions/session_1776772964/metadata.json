@@ -1,0 +1,62 @@
+{
+  "session_id": "session_1776772964",
+  "created_at": 1776772964.241539,
+  "sequence": [
+    {
+      "index": 0,
+      "filename": "0000_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a monarch butterfly, photorealistic, delicate wing details",
+      "timestamp": 1776773012.0888455
+    },
+    {
+      "index": 1,
+      "filename": "0001_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a small kite flying, photorealistic, colorful",
+      "timestamp": 1776773089.593213
+    },
+    {
+      "index": 2,
+      "filename": "0002_BC.png",
+      "target_sector": "BC",
+      "focus_sector": "TC",
+      "prompt": "add a subtle shadow underneath, photorealistic, soft edges",
+      "timestamp": 1776773102.5589144
+    },
+    {
+      "index": 3,
+      "filename": "0003_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a dragonfly hovering, photorealistic, translucent wings",
+      "timestamp": 1776773133.270172
+    },
+    {
+      "index": 4,
+      "filename": "0004_BR.png",
+      "target_sector": "BR",
+      "focus_sector": "TL",
+      "prompt": "add a small ladybug, photorealistic, red with black spots",
+      "timestamp": 1776773146.2907877
+    },
+    {
+      "index": 5,
+      "filename": "0005_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a hummingbird in flight, photorealistic, motion blur on wings",
+      "timestamp": 1776773168.0405047
+    },
+    {
+      "index": 6,
+      "filename": "0006_TR.png",
+      "target_sector": "TR",
+      "focus_sector": "BL",
+      "prompt": "add a monarch butterfly, photorealistic, delicate wing details",
+      "timestamp": 1776773206.648791
+    }
+  ]
+}
