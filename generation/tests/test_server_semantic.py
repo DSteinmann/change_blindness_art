@@ -98,6 +98,25 @@ def test_semantic_generate_synthesises_caption_when_model_omits_it(semantic_app)
     assert "TL" in caption
 
 
+def test_session_start_clears_semantic_history(semantic_app):
+    semantic_call = AsyncMock(return_value=_message_with_caption("first edit"))
+    with patch("server.generate_with_openrouter_semantic", semantic_call):
+        with TestClient(semantic_app.app) as client:
+            _post_generate(client)
+            old_sid = semantic_app.session_manager.current_session_id
+            assert semantic_app.semantic_history.captions(old_sid) == ["first edit"]
+
+            resp = client.post(
+                "/session/start",
+                json={"session_id": "rolled-over", "participant_id": "participant-42"},
+            )
+    assert resp.status_code == 200
+    new_sid = semantic_app.session_manager.current_session_id
+    assert new_sid != old_sid
+    assert semantic_app.semantic_history.captions(old_sid) == []
+    assert semantic_app.semantic_history.captions(new_sid) == []
+
+
 def test_duplicate_caption_is_flagged(semantic_app):
     semantic_call = AsyncMock(return_value=_message_with_caption("a monarch butterfly appeared"))
     with patch("server.generate_with_openrouter_semantic", semantic_call):

@@ -153,17 +153,32 @@ class CalibrationRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class StartSessionRequest(BaseModel):
+    session_id: Optional[str] = None
+    participant_id: Optional[str] = None
+
+
 @app.post("/session/start")
-async def start_session(
-    session_id: Optional[str] = None,
-    participant_id: Optional[str] = None,
-) -> dict:
+async def start_session(req: Optional[StartSessionRequest] = None) -> dict:
+    req = req or StartSessionRequest()
+    prev_sid = session_manager.current_session_id
     sid = session_manager.start_new_session(
-        session_id=session_id,
-        participant_id=participant_id,
+        session_id=req.session_id,
+        participant_id=req.participant_id,
         runtime=_runtime_snapshot(),
     )
-    return {"session_id": sid, "status": "recording", "participant_id": participant_id}
+    if prev_sid and prev_sid != sid:
+        semantic_history.clear(prev_sid)
+    if _backend_client is not None:
+        try:
+            await _backend_client.post(
+                f"{BACKEND_URL}/events/session_started",
+                json={"session_id": sid, "participant_id": req.participant_id},
+                timeout=2.0,
+            )
+        except Exception as exc:
+            print(f"session_started relay failed: {exc}")
+    return {"session_id": sid, "status": "recording", "participant_id": req.participant_id}
 
 
 @app.post("/session/blink")
