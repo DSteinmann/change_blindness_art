@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -115,6 +116,31 @@ def test_session_start_clears_semantic_history(semantic_app):
     assert new_sid != old_sid
     assert semantic_app.semantic_history.captions(old_sid) == []
     assert semantic_app.semantic_history.captions(new_sid) == []
+
+
+async def test_idle_reset_rotates_session_when_stale(semantic_app, monkeypatch):
+    # Drive the app through startup so _idle_lock and session exist.
+    with TestClient(semantic_app.app):
+        sm = semantic_app.session_manager
+        first = sm.current_session_id
+        now = time.time()
+        semantic_app._last_generation_ts = now - 240
+        semantic_app._last_session_started_ts = now - 240
+        # Force a different auto-generated session id (session_<int-time>).
+        monkeypatch.setattr("session_manager.time.time", lambda: now + 10)
+        await semantic_app._maybe_idle_reset()
+        assert sm.current_session_id != first
+
+
+async def test_idle_reset_is_noop_when_recent(semantic_app):
+    with TestClient(semantic_app.app):
+        sm = semantic_app.session_manager
+        first = sm.current_session_id
+        now = time.time()
+        semantic_app._last_generation_ts = now - 30
+        semantic_app._last_session_started_ts = now - 30
+        await semantic_app._maybe_idle_reset()
+        assert sm.current_session_id == first
 
 
 def test_duplicate_caption_is_flagged(semantic_app):

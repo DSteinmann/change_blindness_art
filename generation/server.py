@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 import os
 import time
@@ -42,6 +43,8 @@ PUPIL_CONFIDENCE_THRESHOLD = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"
 GRID_SIZE = int(os.getenv("GRID_SIZE", "3"))
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 GENERATION_MODE = os.getenv("GENERATION_MODE", "cycling").lower()
+IDLE_THRESHOLD_SEC = int(os.getenv("IDLE_RESET_SEC", "180"))
+IDLE_TICK_SEC = 30
 PROMPTS_FILE = Path(__file__).parent / "prompts.txt"
 SECTOR_PROMPTS_FILE = Path(__file__).parent / "sector_prompts.json"
 SESSIONS_DIR = Path("/app/assets/sessions") if Path("/app/assets").exists() else Path(__file__).parent / "sessions"
@@ -69,6 +72,11 @@ prompt_bank = PromptBank(PROMPTS_FILE, SECTOR_PROMPTS_FILE)
 session_manager = SessionManager(SESSIONS_DIR)
 replay_manager = ReplayManager(session_manager)
 semantic_history = SemanticHistory()
+
+_last_generation_ts: float = time.time()
+_last_session_started_ts: float = time.time()
+_idle_task: Optional[asyncio.Task] = None
+_idle_lock: Optional[asyncio.Lock] = None  # constructed at startup on the running loop
 
 _backend_client: httpx.AsyncClient | None = None
 
@@ -101,8 +109,9 @@ class GenerateRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    global _backend_client, GENERATION_MODE
+    global _backend_client, GENERATION_MODE, _idle_task, _idle_lock
     _backend_client = httpx.AsyncClient()
+    _idle_lock = asyncio.Lock()
     prompt_bank.load()
     print(f"OpenRouter API Key: {'✓ Set' if OPENROUTER_API_KEY else '✗ Not set'}")
     print(f"Image model: {IMAGE_MODEL}")
@@ -112,12 +121,57 @@ async def startup_event() -> None:
     print(f"Generation mode: {GENERATION_MODE}")
     session_id = session_manager.start_new_session(runtime=_runtime_snapshot())
     print(f"Auto-started recording session: {session_id}")
+    _idle_task = asyncio.create_task(_idle_watcher())
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    if _idle_task is not None:
+        _idle_task.cancel()
     if _backend_client is not None:
         await _backend_client.aclose()
+
+
+async def _maybe_idle_reset() -> None:
+    """Rotate to a new session if no /generate and no /session/start has fired
+    for IDLE_THRESHOLD_SEC. Skips if a generation is in flight (lock held)."""
+    global _last_session_started_ts
+    if _idle_lock is None or _idle_lock.locked():
+        return
+    async with _idle_lock:
+        now = time.time()
+        stale = (
+            now - _last_generation_ts > IDLE_THRESHOLD_SEC
+            and now - _last_session_started_ts > IDLE_THRESHOLD_SEC
+        )
+        if not stale:
+            return
+        prev_sid = session_manager.current_session_id
+        sid = session_manager.start_new_session(runtime=_runtime_snapshot())
+        if prev_sid and prev_sid != sid:
+            semantic_history.clear(prev_sid)
+        _last_session_started_ts = now
+        if _backend_client is not None:
+            try:
+                await _backend_client.post(
+                    f"{BACKEND_URL}/events/session_started",
+                    json={"session_id": sid, "participant_id": None},
+                    timeout=2.0,
+                )
+            except Exception as exc:
+                print(f"idle session_started relay failed: {exc}")
+        print(f"Idle rotation: new session {sid}")
+
+
+async def _idle_watcher() -> None:
+    while True:
+        try:
+            await asyncio.sleep(IDLE_TICK_SEC)
+            await _maybe_idle_reset()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(f"idle watcher error: {exc}")
 
 
 @app.get("/health")
@@ -178,6 +232,8 @@ async def start_session(req: Optional[StartSessionRequest] = None) -> dict:
             )
         except Exception as exc:
             print(f"session_started relay failed: {exc}")
+    global _last_session_started_ts
+    _last_session_started_ts = time.time()
     return {"session_id": sid, "status": "recording", "participant_id": req.participant_id}
 
 
@@ -245,6 +301,13 @@ async def replay_next() -> Response:
 
 @app.post("/generate")
 async def generate(request: GenerateRequest) -> Response:
+    if _idle_lock is None:
+        return await _generate_impl(request)
+    async with _idle_lock:
+        return await _generate_impl(request)
+
+
+async def _generate_impl(request: GenerateRequest) -> Response:
     t_start = time.perf_counter()
     try:
         init_image = decode_base64_image(request.image_base64)
@@ -349,6 +412,8 @@ async def generate(request: GenerateRequest) -> Response:
     buf = io.BytesIO()
     generated_image.save(buf, format="PNG")
     buf.seek(0)
+    global _last_generation_ts
+    _last_generation_ts = time.time()
     return Response(
         content=buf.getvalue(),
         media_type="image/png",
