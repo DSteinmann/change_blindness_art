@@ -36,6 +36,8 @@ Brief subagents like a new colleague: state the goal, the files/terms you alread
 - **Center sector (MC)** maps to a *random* corner in `frontend/public/main.js` `getOppositeSector` so changes always land in peripheral vision. Don't "fix" this.
 - **Session artefacts** land in `assets/sessions/<id>/` with `metadata.json`. Preserve the schema (`timestamp`, `sector`, `focus_sector`, `prompt`, `index`) — replay code depends on it.
 - **Prompt cycling**: `generation/sector_prompts.json` is the source of truth; `generation/prompts.txt` is the fallback. Each sector advances independently — don't reset all indices when editing one sector.
+- **Semantic mode state is in-memory**: `SemanticHistory` in `generation/semantic.py` lives per-process and per-session. A generation-service restart drops all captions and originals for the current session; the next `/generate` repopulates. Replays rely on `metadata.json.edit_history`, not on the in-memory dict.
+- **Idle auto-reset**: after `IDLE_RESET_SEC` (default 180 s) of no `/generate` and no `/session/start`, the generation service rotates to a new session automatically. Keep traffic flowing or bump the env var when scripting the pipeline.
 
 ## Running and testing
 
