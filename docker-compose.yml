@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
-    container_name: aria-backend
+    container_name: blinkpatch-backend
     environment:
       - PATCH_ASSETS_DIR=/app/assets/patches
       # The following are needed for the backend to connect to Pupil Core
@@ -21,13 +21,13 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - aria-net
+      - blinkpatch-net
 
   generation:
     build:
       context: .
       dockerfile: docker/generation.Dockerfile
-    container_name: aria-generation
+    container_name: blinkpatch-generation
     env_file:
       - .env
     environment:
@@ -38,20 +38,20 @@ services:
     ports:
       - "8001:8001"
     networks:
-      - aria-net
+      - blinkpatch-net
 
   frontend:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
-    container_name: aria-frontend
+    container_name: blinkpatch-frontend
     depends_on:
       - backend
     ports:
       - "8080:8080"
     networks:
-      - aria-net
+      - blinkpatch-net
 
 networks:
-  aria-net:
+  blinkpatch-net:
     driver: bridge

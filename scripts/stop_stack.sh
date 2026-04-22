@@ -10,7 +10,6 @@ kill_pattern() {
   fi
 }
 
-kill_pattern 'aria_stream_relay.py'
 kill_pattern 'uvicorn app.main:app'
 kill_pattern 'python -m http.server'
 

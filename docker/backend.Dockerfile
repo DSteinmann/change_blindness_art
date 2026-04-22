@@ -22,7 +22,7 @@ COPY backend ./backend
 COPY assets ./assets
 
 ENV PATCH_ASSETS_DIR=/app/assets/patches \
-    ARIA_ZMQ_ENDPOINT=tcp://relay:5555
+    BLINKPATCH_ZMQ_ENDPOINT=tcp://relay:5555
 
 EXPOSE 8000
 
