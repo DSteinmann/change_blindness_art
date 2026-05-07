@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Observer</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #05070f;
+      color: #e6f1ff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      height: 100vh;
+      gap: 16px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .stage {
+      position: relative;
+      background: #0b1329;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .grid {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+    }
+    .cell {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: rgba(255, 255, 255, 0.15);
+      transition: background 300ms ease, color 300ms ease;
+    }
+    .cell.focus { background: rgba(0, 229, 255, 0.14); color: rgba(255,255,255,0.7); }
+    .cell.modified { background: rgba(255, 105, 180, 0.25); color: #fff; }
+    #cursor {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      margin: -14px 0 0 -14px;
+      border: 3px solid #00e5ff;
+      border-radius: 50%;
+      pointer-events: none;
+      display: none;
+    }
+    #cursor.stale { border-color: #555; }
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card {
+      background: #0b1329;
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .card h3 {
+      margin: 0 0 6px 0;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.4);
+    }
+    .stat {
+      font-size: 36px;
+      font-weight: 700;
+    }
+    .stat .sub { font-size: 14px; color: rgba(255,255,255,0.5); margin-left: 6px; font-weight: 400; }
+    .prompt { font-style: italic; font-size: 14px; line-height: 1.4; opacity: 0.8; }
+    .mini {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 8px;
+      background: #0b1329 center / contain no-repeat;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="stage" id="stage">
+      <div class="grid" id="grid"></div>
+      <div id="cursor"></div>
+    </div>
+    <div class="sidebar">
+      <div class="card">
+        <h3>Participant</h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input id="participant-input" type="text" placeholder="id (optional)"
+                 style="flex:1; padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:#05070f; color:inherit;" />
+          <button id="new-participant-btn"
+                  style="padding:8px 12px; border:0; border-radius:6px; background:#00e5ff; color:#05070f; font-weight:600; cursor:pointer;">
+            New
+          </button>
+        </div>
+        <div id="participant-banner" style="margin-top:8px; font-size:12px; opacity:0; transition:opacity 300ms;"></div>
+      </div>
+      <div class="card">
+        <h3>Generations</h3>
+        <div class="stat" id="stat-generations">0</div>
+      </div>
+      <div class="card">
+        <h3>Swaps</h3>
+        <div class="stat">
+          <span id="stat-swaps">0</span>
+          <span class="sub">caught <span id="stat-caught">0</span></span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Last edit</h3>
+        <div class="prompt" id="last-caption">&mdash;</div>
+      </div>
+      <div class="card">
+        <h3>Edit history</h3>
+        <ol id="edit-history" style="margin:0; padding-left:20px; font-size:13px; line-height:1.5; max-height:180px; overflow-y:auto;"></ol>
+      </div>
+      <div class="card">
+        <h3>Last generation</h3>
+        <div class="mini" id="last-image"></div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="observer.js"></script>
+</body>
+</html>

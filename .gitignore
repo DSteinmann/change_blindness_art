@@ -39,3 +39,5 @@ htmlcov/
 node_modules/
 
 rust_native/*
+# Runtime session output (per-run experimental data, regenerates each run)
+assets/sessions/

@@ -1,5 +1,6 @@
 import { sectorName, sectorToNormCenter, getOppositeSector, gazeToSector } from "./sectors.js";
 import { setActivePatch } from "./rendering.js";
+import { API_ROOT } from "./config.js";
 
 export class GenerationController {
   constructor(config, gazeStream, fixationTracker) {
@@ -95,6 +96,17 @@ export class GenerationController {
     setActivePatch({ image: this.pendingSwap.image });
     this.capturedImageBase64 = this.pendingSwap.base64;
     console.log(`✓ Image swapped! Modified sector: ${sectorName(targetSector)}`);
+    fetch(`${API_ROOT}/events/swap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_sector: sectorName(targetSector),
+        focus_sector: sectorName(this.pendingSwap.focusSector),
+        target_row: targetSector.row,
+        target_col: targetSector.col,
+        timestamp: Date.now() / 1000,
+      }),
+    }).catch(() => {});
     this.pendingSwap = null;
     this.fixation.reset();
   }

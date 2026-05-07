@@ -61,3 +61,53 @@ def decode_base64_image(base64_str: str) -> Image.Image:
     if "," in base64_str:
         base64_str = base64_str.split(",", 1)[1]
     return Image.open(io.BytesIO(base64.b64decode(base64_str))).convert("RGB")
+
+
+def composite_sector(
+    base: Image.Image,
+    edit: Image.Image,
+    region: tuple[int, int, int, int],
+) -> Image.Image:
+    """Paste only the target sector of `edit` onto a copy of `base`.
+
+    Foundation image models like Gemini Flash Image re-render the entire
+    canvas even when asked to modify a single region, so naively using the
+    model's full output as the next state introduces compounding tone/detail
+    drift across regions we never asked it to touch. By taking only the target
+    sector from the model's output and pasting it onto the previous state, we
+    keep non-target pixels byte-identical across iterations.
+
+    The model's output may differ from `base` in resolution; the region is
+    mapped proportionally and the cropped patch is resized (LANCZOS) to fit
+    the original sector bounds.
+    """
+    sx1, sy1, sx2, sy2 = region
+    bw, bh = base.size
+    ew, eh = edit.size
+    mx1 = sx1 * ew // bw
+    my1 = sy1 * eh // bh
+    mx2 = sx2 * ew // bw
+    my2 = sy2 * eh // bh
+    patch = edit.crop((mx1, my1, mx2, my2)).resize(
+        (sx2 - sx1, sy2 - sy1), Image.LANCZOS
+    )
+    out = base.copy()
+    out.paste(patch, (sx1, sy1))
+    return out
+
+
+def shrink_for_api(img: Image.Image, max_edge: int = 1024) -> str:
+    """Downscale + PNG-encode a PIL image as a data URL, bounding payload size.
+
+    OpenRouter rejects requests where the combined image content exceeds ~30MB.
+    Semantic mode sends two images per call, so each one needs to fit comfortably
+    within ~12MB. 1024 px is also the native generation resolution for current
+    foundation image models — pixels above that get downsampled internally
+    before generation, so we don't gain quality by sending more.
+    """
+    work = img.copy()
+    if max(work.size) > max_edge:
+        work.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    buf = io.BytesIO()
+    work.convert("RGB").save(buf, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()

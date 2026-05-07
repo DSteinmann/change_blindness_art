@@ -47,6 +47,7 @@ class SessionManager:
             "runtime": runtime or {},
             "stats": {"blink_count": 0, "frame_drops": 0},
             "calibration": None,
+            "edit_history": [],
             "sequence": [],
         }
 
@@ -74,6 +75,8 @@ class SessionManager:
         prompt: str,
         focus_sector: str,
         latency_ms: Optional[float] = None,
+        caption: Optional[str] = None,
+        duplicate_caption: bool = False,
     ) -> Dict:
         """Save a generated image and its metadata."""
         if not self.current_session_dir:
@@ -89,11 +92,19 @@ class SessionManager:
             "target_sector": sector_name,
             "focus_sector": focus_sector,
             "prompt": prompt,
+            "caption": caption,
             "timestamp": time.time(),
             "latency_ms": latency_ms,
         }
+        if duplicate_caption:
+            entry["duplicate_caption"] = True
 
         self.metadata["sequence"].append(entry)
+        if caption:
+            history = self.metadata.setdefault("edit_history", [])
+            history.append(caption)
+            if len(history) > 5:
+                del history[: len(history) - 5]
         self._save_metadata()
 
         lat = f", {latency_ms:.0f}ms" if latency_ms is not None else ""

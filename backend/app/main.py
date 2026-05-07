@@ -17,10 +17,10 @@ from .pupil_source import PupilSource
 from .stream import StreamHub
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("aria-backend")
+logger = logging.getLogger("blinkpatch-backend")
 
 settings = get_settings()
-app = FastAPI(title="Aria Gaze Patch Backend", version="0.1.0")
+app = FastAPI(title="BlinkPatch Backend", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -29,6 +29,7 @@ app.add_middleware(
     allow_credentials=True,
 )
 app.mount("/assets", StaticFiles(directory=str(settings.patch_dir)), name="assets")
+app.mount("/sessions", StaticFiles(directory=str(settings.sessions_dir)), name="sessions")
 
 stream_hub = StreamHub(history_size=settings.telemetry_history)
 patch_manager = PatchManager(settings.patch_dir)
@@ -111,6 +112,29 @@ async def register_patch_use(event: dict[str, Any]) -> dict[str, Any]:
     }
     patch_usage_log.append(record)
     return record
+
+
+@app.post("/events/generation")
+async def relay_generation(event: dict[str, Any]) -> dict[str, Any]:
+    """Generation service pings us after each save so observer/feed pages
+    can react without polling."""
+    await stream_hub.broadcast({"event": "generation", **event})
+    return {"ok": True}
+
+
+@app.post("/events/swap")
+async def relay_swap(event: dict[str, Any]) -> dict[str, Any]:
+    """Main frontend pings us when a pending image is actually swapped in."""
+    await stream_hub.broadcast({"event": "swap", **event})
+    return {"ok": True}
+
+
+@app.post("/events/session_started")
+async def relay_session_started(event: dict[str, Any]) -> dict[str, Any]:
+    """Generation service pings us on participant rollover so observer+feed can
+    reset their local state."""
+    await stream_hub.broadcast({"event": "session_started", **event})
+    return {"ok": True}
 
 
 @app.websocket("/ws/stream")

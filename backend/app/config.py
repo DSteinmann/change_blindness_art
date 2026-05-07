@@ -8,8 +8,9 @@ from pathlib import Path
 
 @dataclass
 class Settings:
-    zmq_endpoint: str = os.getenv("ARIA_ZMQ_ENDPOINT", "tcp://127.0.0.1:5555")
+    zmq_endpoint: str = os.getenv("BLINKPATCH_ZMQ_ENDPOINT", "tcp://127.0.0.1:5555")
     patch_dir: Path = Path(os.getenv("PATCH_ASSETS_DIR", "assets/patches")).resolve()
+    sessions_dir: Path = Path(os.getenv("SESSIONS_ASSETS_DIR", "assets/sessions")).resolve()
     cors_origins: list[str] = field(
         default_factory=lambda: os.getenv(
             "CORS_ORIGINS",
@@ -35,4 +36,5 @@ class Settings:
 def get_settings() -> Settings:
     settings = Settings()
     settings.patch_dir.mkdir(parents=True, exist_ok=True)
+    settings.sessions_dir.mkdir(parents=True, exist_ok=True)
     return settings

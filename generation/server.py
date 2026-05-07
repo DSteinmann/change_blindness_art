@@ -2,26 +2,40 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 import os
 import time
 from pathlib import Path
 from typing import Any, Optional
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from openrouter import IMAGE_MODEL, generate_with_openrouter
+from openrouter import (
+    IMAGE_MODEL,
+    generate_with_openrouter,
+    generate_with_openrouter_semantic,
+)
 from prompts import PromptBank
 from sectors import (
     calculate_opposite_region,
     calculate_sector_region,
+    composite_sector,
     create_mask,
     decode_base64_image,
     sector_name,
+    shrink_for_api,
+)
+from semantic import (
+    SemanticHistory,
+    build_prompt,
+    degenerate_caption,
+    parse_response,
 )
 from session_manager import ReplayManager, SessionManager
 
@@ -29,6 +43,10 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 PUPIL_SURFACE_NAME = os.getenv("PUPIL_SURFACE_NAME", "screen")
 PUPIL_CONFIDENCE_THRESHOLD = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"))
 GRID_SIZE = int(os.getenv("GRID_SIZE", "3"))
+BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
+GENERATION_MODE = os.getenv("GENERATION_MODE", "cycling").lower()
+IDLE_THRESHOLD_SEC = int(os.getenv("IDLE_RESET_SEC", "180"))
+IDLE_TICK_SEC = 30
 PROMPTS_FILE = Path(__file__).parent / "prompts.txt"
 SECTOR_PROMPTS_FILE = Path(__file__).parent / "sector_prompts.json"
 SESSIONS_DIR = Path("/app/assets/sessions") if Path("/app/assets").exists() else Path(__file__).parent / "sessions"
@@ -37,10 +55,10 @@ SESSIONS_DIR = Path("/app/assets/sessions") if Path("/app/assets").exists() else
 def _runtime_snapshot() -> dict[str, Any]:
     return {
         "image_model": IMAGE_MODEL,
+        "mode": GENERATION_MODE,
         "pupil_surface_name": PUPIL_SURFACE_NAME,
         "pupil_confidence_threshold": PUPIL_CONFIDENCE_THRESHOLD,
         "grid_size": GRID_SIZE,
-        "prompts_file_sha": None,  # populated at startup once prompts load
     }
 
 app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0")
@@ -55,6 +73,29 @@ app.add_middleware(
 prompt_bank = PromptBank(PROMPTS_FILE, SECTOR_PROMPTS_FILE)
 session_manager = SessionManager(SESSIONS_DIR)
 replay_manager = ReplayManager(session_manager)
+semantic_history = SemanticHistory()
+
+_last_generation_ts: float = time.time()
+_last_session_started_ts: float = time.time()
+_idle_task: Optional[asyncio.Task] = None
+_idle_lock: Optional[asyncio.Lock] = None  # constructed at startup on the running loop
+
+_backend_client: httpx.AsyncClient | None = None
+
+
+async def _notify_backend(entry: dict) -> None:
+    """Fire-and-forget: tell the backend a new image is on disk so observer /
+    feed clients get a WS push instead of polling. Failures are debug-only."""
+    if _backend_client is None or not session_manager.current_session_id:
+        return
+    try:
+        await _backend_client.post(
+            f"{BACKEND_URL}/events/generation",
+            json={"session_id": session_manager.current_session_id, **entry},
+            timeout=2.0,
+        )
+    except Exception as exc:
+        print(f"generation relay failed: {exc}")
 
 
 class GenerateRequest(BaseModel):
@@ -69,12 +110,70 @@ class GenerateRequest(BaseModel):
 
 
 @app.on_event("startup")
-def startup_event() -> None:
+async def startup_event() -> None:
+    global _backend_client, GENERATION_MODE, _idle_task, _idle_lock
+    _backend_client = httpx.AsyncClient()
+    _idle_lock = asyncio.Lock()
     prompt_bank.load()
     print(f"OpenRouter API Key: {'✓ Set' if OPENROUTER_API_KEY else '✗ Not set'}")
     print(f"Image model: {IMAGE_MODEL}")
+    if GENERATION_MODE == "semantic" and not OPENROUTER_API_KEY:
+        print("GENERATION_MODE=semantic but OPENROUTER_API_KEY missing; coercing to cycling")
+        GENERATION_MODE = "cycling"
+    print(f"Generation mode: {GENERATION_MODE}")
     session_id = session_manager.start_new_session(runtime=_runtime_snapshot())
     print(f"Auto-started recording session: {session_id}")
+    _idle_task = asyncio.create_task(_idle_watcher())
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    if _idle_task is not None:
+        _idle_task.cancel()
+    if _backend_client is not None:
+        await _backend_client.aclose()
+
+
+async def _maybe_idle_reset() -> None:
+    """Rotate to a new session if no /generate and no /session/start has fired
+    for IDLE_THRESHOLD_SEC. Skips if a generation is in flight (lock held)."""
+    global _last_session_started_ts
+    if _idle_lock is None or _idle_lock.locked():
+        return
+    async with _idle_lock:
+        now = time.time()
+        stale = (
+            now - _last_generation_ts > IDLE_THRESHOLD_SEC
+            and now - _last_session_started_ts > IDLE_THRESHOLD_SEC
+        )
+        if not stale:
+            return
+        prev_sid = session_manager.current_session_id
+        sid = session_manager.start_new_session(runtime=_runtime_snapshot())
+        if prev_sid and prev_sid != sid:
+            semantic_history.clear(prev_sid)
+        _last_session_started_ts = now
+        if _backend_client is not None:
+            try:
+                await _backend_client.post(
+                    f"{BACKEND_URL}/events/session_started",
+                    json={"session_id": sid, "participant_id": None},
+                    timeout=2.0,
+                )
+            except Exception as exc:
+                print(f"idle session_started relay failed: {exc}")
+        print(f"Idle rotation: new session {sid}")
+
+
+async def _idle_watcher() -> None:
+    while True:
+        try:
+            await asyncio.sleep(IDLE_TICK_SEC)
+            await _maybe_idle_reset()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(f"idle watcher error: {exc}")
 
 
 @app.get("/health")
@@ -110,17 +209,34 @@ class CalibrationRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class StartSessionRequest(BaseModel):
+    session_id: Optional[str] = None
+    participant_id: Optional[str] = None
+
+
 @app.post("/session/start")
-async def start_session(
-    session_id: Optional[str] = None,
-    participant_id: Optional[str] = None,
-) -> dict:
+async def start_session(req: Optional[StartSessionRequest] = None) -> dict:
+    req = req or StartSessionRequest()
+    prev_sid = session_manager.current_session_id
     sid = session_manager.start_new_session(
-        session_id=session_id,
-        participant_id=participant_id,
+        session_id=req.session_id,
+        participant_id=req.participant_id,
         runtime=_runtime_snapshot(),
     )
-    return {"session_id": sid, "status": "recording", "participant_id": participant_id}
+    if prev_sid and prev_sid != sid:
+        semantic_history.clear(prev_sid)
+    if _backend_client is not None:
+        try:
+            await _backend_client.post(
+                f"{BACKEND_URL}/events/session_started",
+                json={"session_id": sid, "participant_id": req.participant_id},
+                timeout=2.0,
+            )
+        except Exception as exc:
+            print(f"session_started relay failed: {exc}")
+    global _last_session_started_ts
+    _last_session_started_ts = time.time()
+    return {"session_id": sid, "status": "recording", "participant_id": req.participant_id}
 
 
 @app.post("/session/blink")
@@ -187,6 +303,13 @@ async def replay_next() -> Response:
 
 @app.post("/generate")
 async def generate(request: GenerateRequest) -> Response:
+    if _idle_lock is None:
+        return await _generate_impl(request)
+    async with _idle_lock:
+        return await _generate_impl(request)
+
+
+async def _generate_impl(request: GenerateRequest) -> Response:
     t_start = time.perf_counter()
     try:
         init_image = decode_base64_image(request.image_base64)
@@ -219,27 +342,89 @@ async def generate(request: GenerateRequest) -> Response:
     # Mask is unused by OpenRouter but kept for any future local backend.
     _ = create_mask(init_image.size, region)
 
-    if OPENROUTER_API_KEY:
+    caption: str | None = None
+    duplicate_caption = False
+    semantic_success = False
+    generated_image = init_image
+
+    if GENERATION_MODE == "semantic" and OPENROUTER_API_KEY:
+        session_id = session_manager.current_session_id or "anon"
+        # Bound payload size: OpenRouter rejects images >30MB and we send two
+        # per call. Shrink the frontend's PNG to a 1024 px optimised PNG.
+        current_compressed = shrink_for_api(init_image)
+        semantic_history.set_original(session_id, current_compressed)
+        prior_captions = semantic_history.captions(session_id)
+        parts = build_prompt(
+            original_b64=semantic_history.original(session_id) or current_compressed,
+            current_b64=current_compressed,
+            captions=prior_captions,
+            region=region,
+            sector_name=target,
+        )
         try:
-            generated_image = await generate_with_openrouter(
-                init_image, prompt, region, OPENROUTER_API_KEY,
+            message = await generate_with_openrouter_semantic(parts, OPENROUTER_API_KEY)
+        except Exception as first_err:
+            print(f"semantic first attempt failed: {first_err} - retrying with terser prompt")
+            parts[-1]["text"] = (
+                "Propose one new small edit distinct from any prior edit, inside the "
+                f"pixel rectangle (x1={region[0]}, y1={region[1]}, x2={region[2]}, "
+                f"y2={region[3]}). Return the full modified image and a one-sentence "
+                'CAPTION: describing what you changed.'
             )
-        except Exception as api_err:
-            print(f"OpenRouter API failed: {api_err}")
+            try:
+                message = await generate_with_openrouter_semantic(parts, OPENROUTER_API_KEY)
+            except Exception as retry_err:
+                print(f"semantic retry failed: {retry_err}")
+                message = None
+        if message is not None:
+            image_out, caption = parse_response(message)
+            if image_out is not None:
+                generated_image = image_out
+                semantic_success = True
+                prior_lower = [c.lower() for c in prior_captions]
+                if caption and any(caption.lower() in p or p in caption.lower() for p in prior_lower):
+                    duplicate_caption = True
+                if caption is None:
+                    caption = degenerate_caption(session_manager.sequence_index, target)
+
+    if not semantic_success:
+        if OPENROUTER_API_KEY:
+            try:
+                generated_image = await generate_with_openrouter(
+                    init_image, prompt, region, OPENROUTER_API_KEY,
+                )
+            except Exception as api_err:
+                print(f"OpenRouter API failed: {api_err}")
+                generated_image = init_image
+        else:
+            print("No API key set - returning original image")
             generated_image = init_image
-    else:
-        print("No API key set - returning original image")
-        generated_image = init_image
+        caption = None
+        duplicate_caption = False
+
+    # Sector compositing: keep non-target pixels byte-identical to the previous
+    # state. The model re-renders the whole canvas; without this, every call
+    # introduces drift in regions we never asked it to modify.
+    if generated_image is not init_image:
+        generated_image = composite_sector(init_image, generated_image, region)
 
     latency_ms = (time.perf_counter() - t_start) * 1000
+    entry: dict = {}
     if session_manager.current_session_id:
-        session_manager.save_generation(
-            generated_image, target, prompt, focus_sector, latency_ms=latency_ms,
+        entry = session_manager.save_generation(
+            generated_image, target, prompt, focus_sector,
+            latency_ms=latency_ms, caption=caption,
+            duplicate_caption=duplicate_caption,
         )
+        await _notify_backend(entry)
+        if semantic_success and caption:
+            semantic_history.append(session_manager.current_session_id, caption)
 
     buf = io.BytesIO()
     generated_image.save(buf, format="PNG")
     buf.seek(0)
+    global _last_generation_ts
+    _last_generation_ts = time.time()
     return Response(
         content=buf.getvalue(),
         media_type="image/png",
