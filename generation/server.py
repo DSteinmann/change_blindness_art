@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -48,6 +48,9 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 GENERATION_MODE = os.getenv("GENERATION_MODE", "cycling").lower()
 IDLE_THRESHOLD_SEC = int(os.getenv("IDLE_RESET_SEC", "180"))
 IDLE_TICK_SEC = 30
+# The captioner doesn't need detail to describe a change; smaller inputs cut
+# round-trip time roughly in half.
+CAPTION_INPUT_MAX_EDGE = 512
 PROMPTS_FILE = Path(__file__).parent / "prompts.txt"
 SECTOR_PROMPTS_FILE = Path(__file__).parent / "sector_prompts.json"
 SESSIONS_DIR = Path("/app/assets/sessions") if Path("/app/assets").exists() else Path(__file__).parent / "sessions"
@@ -303,14 +306,34 @@ async def replay_next() -> Response:
 
 
 @app.post("/generate")
-async def generate(request: GenerateRequest) -> Response:
+async def generate(request: GenerateRequest, background: BackgroundTasks) -> Response:
     if _idle_lock is None:
-        return await _generate_impl(request)
+        return await _generate_impl(request, background)
     async with _idle_lock:
-        return await _generate_impl(request)
+        return await _generate_impl(request, background)
 
 
-async def _generate_impl(request: GenerateRequest) -> Response:
+async def _caption_after_response(
+    session_id: str,
+    entry_index: int,
+    original_b64: str,
+    edit_b64: str,
+    target: str,
+    prior_captions_lower: list[str],
+) -> None:
+    """Run the captioner outside the request-response window and stitch the
+    result into both the persisted entry and the in-memory SemanticHistory."""
+    caption = await caption_edit(original_b64, edit_b64, target, OPENROUTER_API_KEY)
+    if not caption:
+        return
+    duplicate = any(
+        caption.lower() in p or p in caption.lower() for p in prior_captions_lower
+    )
+    if session_manager.update_caption(session_id, entry_index, caption, duplicate=duplicate):
+        semantic_history.append(session_id, caption)
+
+
+async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) -> Response:
     t_start = time.perf_counter()
     try:
         init_image = decode_base64_image(request.image_base64)
@@ -352,6 +375,7 @@ async def _generate_impl(request: GenerateRequest) -> Response:
     duplicate_caption = False
     semantic_success = False
     generated_image = init_image
+    pending_caption_args: dict | None = None
 
     if GENERATION_MODE == "semantic" and OPENROUTER_API_KEY:
         session_id = session_manager.current_session_id or "anon"
@@ -391,21 +415,25 @@ async def _generate_impl(request: GenerateRequest) -> Response:
             if image_out is not None:
                 generated_image = image_out
                 semantic_success = True
-                # Image models routinely return no text. Round-trip a cheap
-                # text-capable model to caption the actual edit so cumulative
-                # divergence has real signal to diverge from.
-                if caption is None:
-                    caption = await caption_edit(
-                        original_b64=semantic_history.original(session_id) or current_compressed,
-                        current_b64=shrink_for_api(image_out),
-                        sector_name=target,
-                        api_key=OPENROUTER_API_KEY,
-                    )
-                if caption is None:
-                    caption = degenerate_caption(session_manager.sequence_index, target)
                 prior_lower = [c.lower() for c in prior_captions]
-                if any(caption.lower() in p or p in caption.lower() for p in prior_lower):
-                    duplicate_caption = True
+                if caption is not None:
+                    # Rare: the image model actually included text. Use it as-is.
+                    if any(caption.lower() in p or p in caption.lower() for p in prior_lower):
+                        duplicate_caption = True
+                else:
+                    # Common: image model dropped the text portion. Schedule
+                    # a captioner call as a background task so the response
+                    # returns immediately. The entry's caption stays None
+                    # until the task lands.
+                    edit_b64 = shrink_for_api(image_out, max_edge=CAPTION_INPUT_MAX_EDGE)
+                    original_b64 = semantic_history.original(session_id) or current_compressed
+                    pending_caption_args = {
+                        "session_id": session_id,
+                        "original_b64": original_b64,
+                        "edit_b64": edit_b64,
+                        "target": target,
+                        "prior_captions_lower": prior_lower,
+                    }
 
     if not semantic_success:
         if OPENROUTER_API_KEY:
@@ -437,6 +465,15 @@ async def _generate_impl(request: GenerateRequest) -> Response:
         await _notify_backend(entry)
         if semantic_success and caption:
             semantic_history.append(session_manager.current_session_id, caption)
+        elif pending_caption_args is not None:
+            # Schedule the captioner to run after the response is sent. It
+            # will late-update the entry's caption + edit_history when it
+            # completes, without blocking this request.
+            background.add_task(
+                _caption_after_response,
+                entry_index=entry["index"],
+                **pending_caption_args,
+            )
 
     buf = io.BytesIO()
     generated_image.save(buf, format="PNG")

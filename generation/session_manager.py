@@ -68,6 +68,31 @@ class SessionManager:
         self.metadata["calibration"] = calibration
         self._save_metadata()
 
+    def update_caption(
+        self,
+        session_id: str,
+        index: int,
+        caption: str,
+        duplicate: bool = False,
+    ) -> bool:
+        """Late-update an entry's caption (and edit_history) for an in-flight
+        async captioner. Returns True iff applied. Skipped when the session
+        rotated under us or the index is no longer valid."""
+        if self.current_session_id != session_id:
+            return False
+        sequence = self.metadata.get("sequence", [])
+        if index < 0 or index >= len(sequence):
+            return False
+        sequence[index]["caption"] = caption
+        if duplicate:
+            sequence[index]["duplicate_caption"] = True
+        history = self.metadata.setdefault("edit_history", [])
+        history.append(caption)
+        if len(history) > 5:
+            del history[: len(history) - 5]
+        self._save_metadata()
+        return True
+
     def save_generation(
         self,
         image: Image.Image,

@@ -86,27 +86,25 @@ def test_semantic_generate_falls_back_to_cycling_on_repeated_failure(semantic_ap
     assert cycling_call.await_count == 1
 
 
-def test_semantic_generate_uses_captioner_when_image_model_returns_no_caption(
-    semantic_app,
-):
+def test_semantic_generate_schedules_captioner_in_background(semantic_app):
     semantic_call = AsyncMock(return_value=_message_with_caption(None))
     semantic_app.caption_edit = AsyncMock(return_value="a butterfly drifted past")
     with patch("server.generate_with_openrouter_semantic", semantic_call):
         with TestClient(semantic_app.app) as client:
             _post_generate(client)
+    # FastAPI runs BackgroundTasks before the TestClient returns from .post().
     session_id = semantic_app.session_manager.current_session_id
     metadata = json.loads(
         (semantic_app.SESSIONS_DIR / session_id / "metadata.json").read_text()
     )
     assert metadata["sequence"][0]["caption"] == "a butterfly drifted past"
+    assert metadata["edit_history"] == ["a butterfly drifted past"]
     assert semantic_app.caption_edit.await_count == 1
 
 
-def test_semantic_generate_falls_back_to_degenerate_when_captioner_also_fails(
-    semantic_app,
-):
+def test_semantic_generate_leaves_caption_null_when_captioner_fails(semantic_app):
     semantic_call = AsyncMock(return_value=_message_with_caption(None))
-    # Default fixture caption_edit already returns None, simulating a failure.
+    # Default fixture caption_edit returns None, simulating a failure.
     with patch("server.generate_with_openrouter_semantic", semantic_call):
         with TestClient(semantic_app.app) as client:
             _post_generate(client)
@@ -114,9 +112,9 @@ def test_semantic_generate_falls_back_to_degenerate_when_captioner_also_fails(
     metadata = json.loads(
         (semantic_app.SESSIONS_DIR / session_id / "metadata.json").read_text()
     )
-    caption = metadata["sequence"][0]["caption"]
-    assert caption is not None
-    assert "TL" in caption
+    # The async captioner returned None, so the entry stays uncaptioned.
+    assert metadata["sequence"][0]["caption"] is None
+    assert metadata["edit_history"] == []
 
 
 def test_session_start_clears_semantic_history(semantic_app):
