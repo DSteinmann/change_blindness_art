@@ -10,6 +10,10 @@ from PIL import Image
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview")
+# Text model used to caption the model's autonomous edit. The image model
+# routinely drops the text portion of `modalities: ["image", "text"]`, so we
+# round-trip a cheaper text-capable model instead.
+CAPTION_MODEL = os.getenv("OPENROUTER_CAPTION_MODEL", "google/gemini-2.5-flash")
 # OpenRouter's image_config.image_size knob: "0.5K" | "1K" | "2K" (default) | "4K".
 # 0.5K is fast-mode (gemini-3.1-flash-image-preview only); 2K trades latency
 # and bandwidth for noticeably more detail in the model's full-frame regen.
@@ -109,6 +113,58 @@ async def generate_with_openrouter(
     if image_out is None:
         raise RuntimeError("Model did not return an image")
     return image_out
+
+
+async def caption_edit(
+    original_b64: str,
+    current_b64: str,
+    sector_name: str,
+    api_key: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Ask a text-capable model to describe the change between two images.
+
+    Used because the image-generation model often returns no text content even
+    when `modalities: ["image", "text"]` is requested. Returns None on any
+    failure — caller should fall back to a synthesised caption.
+    """
+    payload = {
+        "model": CAPTION_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": original_b64}},
+                {"type": "image_url", "image_url": {"url": current_b64}},
+                {"type": "text", "text": (
+                    "Compare these two images. The first is the original. "
+                    f"The second has had ONE small edit applied somewhere in the {sector_name} "
+                    "region. In one sentence, describe what was added or changed. "
+                    "Reply with just the caption - no preface."
+                )},
+            ],
+        }],
+    }
+    owned, created = _resolve_client(client)
+    try:
+        message = await _post_chat(payload, api_key, owned)
+    except Exception as exc:
+        print(f"caption_edit failed: {exc}")
+        return None
+    finally:
+        if created:
+            await owned.aclose()
+    content = message.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text = (part.get("text") or "").strip()
+                if text:
+                    return text
+        return None
+    if isinstance(content, str):
+        return content.strip() or None
+    return None
 
 
 async def generate_with_openrouter_semantic(

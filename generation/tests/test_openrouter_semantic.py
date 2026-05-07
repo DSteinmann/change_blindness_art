@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from openrouter import generate_with_openrouter_semantic
+from openrouter import caption_edit, generate_with_openrouter_semantic
 from semantic import build_prompt, parse_response
 
 
@@ -69,3 +69,34 @@ async def test_semantic_payload_carries_two_images_and_instructions(tiny_png_b64
     text_parts = [p for p in content if p["type"] == "text"]
     assert "prior edit" in text_parts[0]["text"]
     assert body["image_config"]["image_size"] == "2K"
+
+
+async def test_caption_edit_returns_string_on_success(tiny_png_b64):
+    body = {"choices": [{"message": {"content": "a small ladybug landed on the leaf"}}]}
+    transport = _mock_transport(200, body)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await caption_edit(
+            tiny_png_b64, tiny_png_b64, "TR", "fake-key", client=client,
+        )
+    assert result == "a small ladybug landed on the leaf"
+
+
+async def test_caption_edit_returns_none_on_api_error(tiny_png_b64):
+    transport = _mock_transport(500, {"error": "boom"})
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await caption_edit(
+            tiny_png_b64, tiny_png_b64, "TR", "fake-key", client=client,
+        )
+    assert result is None
+
+
+async def test_caption_edit_handles_list_content(tiny_png_b64):
+    body = {"choices": [{"message": {"content": [
+        {"type": "text", "text": "  a butterfly drifted in  "},
+    ]}}]}
+    transport = _mock_transport(200, body)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await caption_edit(
+            tiny_png_b64, tiny_png_b64, "MC", "fake-key", client=client,
+        )
+    assert result == "a butterfly drifted in"

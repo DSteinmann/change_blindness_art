@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from openrouter import (
     IMAGE_MODEL,
+    caption_edit,
     generate_with_openrouter,
     generate_with_openrouter_semantic,
 )
@@ -390,16 +391,21 @@ async def _generate_impl(request: GenerateRequest) -> Response:
             if image_out is not None:
                 generated_image = image_out
                 semantic_success = True
-                prior_lower = [c.lower() for c in prior_captions]
-                if caption and any(caption.lower() in p or p in caption.lower() for p in prior_lower):
-                    duplicate_caption = True
+                # Image models routinely return no text. Round-trip a cheap
+                # text-capable model to caption the actual edit so cumulative
+                # divergence has real signal to diverge from.
                 if caption is None:
-                    raw = message.get("content", "")
-                    print(
-                        "semantic: image returned but caption parser missed it. "
-                        f"raw content[:500]={str(raw)[:500]!r}"
+                    caption = await caption_edit(
+                        original_b64=semantic_history.original(session_id) or current_compressed,
+                        current_b64=shrink_for_api(image_out),
+                        sector_name=target,
+                        api_key=OPENROUTER_API_KEY,
                     )
+                if caption is None:
                     caption = degenerate_caption(session_manager.sequence_index, target)
+                prior_lower = [c.lower() for c in prior_captions]
+                if any(caption.lower() in p or p in caption.lower() for p in prior_lower):
+                    duplicate_caption = True
 
     if not semantic_success:
         if OPENROUTER_API_KEY:
@@ -419,9 +425,12 @@ async def _generate_impl(request: GenerateRequest) -> Response:
 
     latency_ms = (time.perf_counter() - t_start) * 1000
     entry: dict = {}
+    # In semantic mode the model decided autonomously; the curated prompt
+    # string was never seen by it. Record that honestly in metadata.
+    recorded_prompt = "semantic auto-edit" if semantic_success else prompt
     if session_manager.current_session_id:
         entry = session_manager.save_generation(
-            generated_image, target, prompt, focus_sector,
+            generated_image, target, recorded_prompt, focus_sector,
             latency_ms=latency_ms, caption=caption,
             duplicate_caption=duplicate_caption,
         )

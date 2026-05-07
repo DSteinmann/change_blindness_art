@@ -29,8 +29,9 @@ def semantic_app(monkeypatch, tmp_path):
     importlib.reload(server)
     server.SESSIONS_DIR = tmp_path
     server.session_manager.sessions_dir = tmp_path
-    # Neutralise the backend relay — tests shouldn't hit the network.
+    # Neutralise outbound HTTP — tests shouldn't hit the network.
     server._notify_backend = AsyncMock(return_value=None)
+    server.caption_edit = AsyncMock(return_value=None)
     yield server
 
 
@@ -85,8 +86,27 @@ def test_semantic_generate_falls_back_to_cycling_on_repeated_failure(semantic_ap
     assert cycling_call.await_count == 1
 
 
-def test_semantic_generate_synthesises_caption_when_model_omits_it(semantic_app):
+def test_semantic_generate_uses_captioner_when_image_model_returns_no_caption(
+    semantic_app,
+):
     semantic_call = AsyncMock(return_value=_message_with_caption(None))
+    semantic_app.caption_edit = AsyncMock(return_value="a butterfly drifted past")
+    with patch("server.generate_with_openrouter_semantic", semantic_call):
+        with TestClient(semantic_app.app) as client:
+            _post_generate(client)
+    session_id = semantic_app.session_manager.current_session_id
+    metadata = json.loads(
+        (semantic_app.SESSIONS_DIR / session_id / "metadata.json").read_text()
+    )
+    assert metadata["sequence"][0]["caption"] == "a butterfly drifted past"
+    assert semantic_app.caption_edit.await_count == 1
+
+
+def test_semantic_generate_falls_back_to_degenerate_when_captioner_also_fails(
+    semantic_app,
+):
+    semantic_call = AsyncMock(return_value=_message_with_caption(None))
+    # Default fixture caption_edit already returns None, simulating a failure.
     with patch("server.generate_with_openrouter_semantic", semantic_call):
         with TestClient(semantic_app.app) as client:
             _post_generate(client)
