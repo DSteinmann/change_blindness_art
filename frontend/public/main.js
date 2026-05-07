@@ -4,7 +4,7 @@ import { GazeStream } from "./gaze.js";
 import { FixationTracker } from "./fixation.js";
 import { GenerationController } from "./generation.js";
 
-const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/a-single-banana-on-a-white-background-in-the-upp-p1-1765812893-00.png`;
+const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/pexels-triemli-28578413.jpg`;
 
 async function loadDefaultBaseImage(controller) {
   try {
