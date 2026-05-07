@@ -62,8 +62,10 @@ async def test_semantic_payload_carries_two_images_and_instructions(tiny_png_b64
         parts = build_prompt(tiny_png_b64, tiny_png_b64, ["prior edit"], (0, 0, 10, 10), "TL")
         await generate_with_openrouter_semantic(parts, "fake-key", client=client)
 
-    content = captured["body"]["messages"][0]["content"]
+    body = captured["body"]
+    content = body["messages"][0]["content"]
     image_parts = [p for p in content if p["type"] == "image_url"]
     assert len(image_parts) == 2
     text_parts = [p for p in content if p["type"] == "text"]
     assert "prior edit" in text_parts[0]["text"]
+    assert body["image_config"] == {"image_size": "1K"}

@@ -10,6 +10,10 @@ from PIL import Image
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview")
+# OpenRouter's image_config.image_size knob: "0.5K" | "1K" (default) | "2K" | "4K".
+# 1K matches our 1024 px input and the sector-compositor; 0.5K is the fast-mode
+# variant supported only on google/gemini-3.1-flash-image-preview.
+IMAGE_SIZE = os.getenv("OPENROUTER_IMAGE_SIZE", "1K")
 
 
 def _extract_image(message: dict) -> Image.Image | None:
@@ -85,6 +89,7 @@ async def generate_with_openrouter(
             ],
         }],
         "modalities": ["image", "text"],
+        "image_config": {"image_size": IMAGE_SIZE},
     }
     owned, created = _resolve_client(client)
     try:
@@ -110,6 +115,7 @@ async def generate_with_openrouter_semantic(
         "model": IMAGE_MODEL,
         "messages": [{"role": "user", "content": content_parts}],
         "modalities": ["image", "text"],
+        "image_config": {"image_size": IMAGE_SIZE},
     }
     owned, created = _resolve_client(client)
     try:
