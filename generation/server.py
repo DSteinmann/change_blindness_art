@@ -385,6 +385,11 @@ async def _generate_impl(request: GenerateRequest) -> Response:
                 if caption and any(caption.lower() in p or p in caption.lower() for p in prior_lower):
                     duplicate_caption = True
                 if caption is None:
+                    raw = message.get("content", "")
+                    print(
+                        "semantic: image returned but caption parser missed it. "
+                        f"raw content[:500]={str(raw)[:500]!r}"
+                    )
                     caption = degenerate_caption(session_manager.sequence_index, target)
 
     if not semantic_success:
