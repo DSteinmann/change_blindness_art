@@ -11,6 +11,8 @@ export class GenerationController {
     this.pendingSwap = null;
     this.isGenerating = false;
     this.lastBlinkState = "open";
+    this.lastBlinkOnsetTs = 0;
+    this.BLINK_GRACE_MS = 250;
 
     fixationTracker.addEventListener("fixation", (e) => this.#onFixation(e.detail.sector));
   }
@@ -21,10 +23,19 @@ export class GenerationController {
   }
 
   handleBlink(state) {
-    if (this.lastBlinkState !== "closed" && state === "closed" && this.pendingSwap) {
-      this.#attemptSwap();
+    const onset = this.lastBlinkState !== "closed" && state === "closed";
+    if (onset) {
+      this.lastBlinkOnsetTs = Date.now();
+      if (this.pendingSwap) this.#attemptSwap();
     }
     this.lastBlinkState = state;
+  }
+
+  // Eyes-closed when this becomes truthy means we should fire the swap
+  // immediately instead of waiting for the next onset that may never come.
+  #shouldFireImmediately() {
+    if (this.lastBlinkState === "closed") return true;
+    return Date.now() - this.lastBlinkOnsetTs < this.BLINK_GRACE_MS;
   }
 
   async #onFixation(focusSector) {
@@ -80,7 +91,12 @@ export class GenerationController {
       targetSector,
       focusSector,
     };
-    console.log("Generated image ready, waiting for safe blink...");
+    if (this.#shouldFireImmediately()) {
+      console.log("Generated image ready - eyes are closed, swapping immediately");
+      this.#attemptSwap();
+    } else {
+      console.log("Generated image ready, waiting for next blink...");
+    }
   }
 
   #attemptSwap() {
