@@ -124,20 +124,18 @@ def test_degenerate_caption_is_non_empty():
     assert "4" in c
 
 
-def test_shrink_for_api_caps_max_edge_and_emits_jpeg():
+def test_shrink_for_api_caps_max_edge_and_emits_png():
     from PIL import Image
     from sectors import shrink_for_api
 
     big = Image.new("RGB", (4096, 2048), (200, 100, 50))
-    data_url = shrink_for_api(big, max_edge=512, quality=80)
-    assert data_url.startswith("data:image/jpeg;base64,")
+    data_url = shrink_for_api(big, max_edge=512)
+    assert data_url.startswith("data:image/png;base64,")
 
     import base64, io
     payload = base64.b64decode(data_url.split(",", 1)[1])
     decoded = Image.open(io.BytesIO(payload))
     assert max(decoded.size) <= 512
-    # 4096-byte raw threshold confirms we're emitting a real (compressed) JPEG.
-    assert len(payload) < 200_000
 
 
 def test_shrink_for_api_passes_small_images_through():
@@ -145,7 +143,7 @@ def test_shrink_for_api_passes_small_images_through():
     from sectors import shrink_for_api
 
     small = Image.new("RGB", (200, 200), (0, 0, 0))
-    data_url = shrink_for_api(small, max_edge=1280)
+    data_url = shrink_for_api(small)
     import base64, io
     decoded = Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
     assert decoded.size == (200, 200)

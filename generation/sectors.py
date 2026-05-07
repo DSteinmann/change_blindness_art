@@ -63,17 +63,18 @@ def decode_base64_image(base64_str: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(base64_str))).convert("RGB")
 
 
-def shrink_for_api(img: Image.Image, max_edge: int = 1280, quality: int = 90) -> str:
-    """Downscale + JPEG-encode a PIL image as a data URL, bounding payload size.
+def shrink_for_api(img: Image.Image, max_edge: int = 1024) -> str:
+    """Downscale + PNG-encode a PIL image as a data URL, bounding payload size.
 
-    OpenRouter rejects requests where any single image exceeds ~30MB. The
-    semantic mode sends two images per call; raw PNG canvas captures from the
-    frontend can blow past that limit on high-res displays. Shrinking to a max
-    edge of 1280 px and JPEG Q90 keeps each image at a few hundred kilobytes.
+    OpenRouter rejects requests where the combined image content exceeds ~30MB.
+    Semantic mode sends two images per call, so each one needs to fit comfortably
+    within ~12MB. 1024 px is also the native generation resolution for current
+    foundation image models — pixels above that get downsampled internally
+    before generation, so we don't gain quality by sending more.
     """
     work = img.copy()
     if max(work.size) > max_edge:
         work.thumbnail((max_edge, max_edge), Image.LANCZOS)
     buf = io.BytesIO()
-    work.convert("RGB").save(buf, format="JPEG", quality=quality)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    work.convert("RGB").save(buf, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
