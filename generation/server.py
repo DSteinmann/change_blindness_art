@@ -34,7 +34,8 @@ from sectors import (
 )
 from semantic import (
     SemanticHistory,
-    build_prompt,
+    SemanticTurn,
+    build_messages,
     degenerate_caption,
     parse_response,
 )
@@ -316,13 +317,14 @@ async def generate(request: GenerateRequest, background: BackgroundTasks) -> Res
 async def _caption_after_response(
     session_id: str,
     entry_index: int,
+    turn_index: int,
     original_b64: str,
     edit_b64: str,
     target: str,
     prior_captions_lower: list[str],
 ) -> None:
     """Run the captioner outside the request-response window and stitch the
-    result into both the persisted entry and the in-memory SemanticHistory."""
+    result into both the persisted entry and the in-memory SemanticHistory turn."""
     caption = await caption_edit(original_b64, edit_b64, target, OPENROUTER_API_KEY)
     if not caption:
         return
@@ -330,7 +332,7 @@ async def _caption_after_response(
         caption.lower() in p or p in caption.lower() for p in prior_captions_lower
     )
     if session_manager.update_caption(session_id, entry_index, caption, duplicate=duplicate):
-        semantic_history.append(session_id, caption)
+        semantic_history.update_caption_at(session_id, turn_index, caption)
 
 
 async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) -> Response:
@@ -379,33 +381,32 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
 
     if GENERATION_MODE == "semantic" and OPENROUTER_API_KEY:
         session_id = session_manager.current_session_id or "anon"
-        # Bound payload size: OpenRouter rejects images >30MB and we send two
-        # per call. Shrink the frontend's PNG to a 1024 px optimised PNG.
+        # Bound payload size: OpenRouter rejects images >30MB and the multi-turn
+        # message array carries the original + up to HISTORY_WINDOW prior edits.
         current_compressed = shrink_for_api(init_image)
         semantic_history.set_original(session_id, current_compressed)
-        prior_captions = semantic_history.captions(session_id)
-        parts = build_prompt(
+        prior_turns = semantic_history.turns(session_id)
+        messages = build_messages(
             original_b64=semantic_history.original(session_id) or current_compressed,
-            current_b64=current_compressed,
-            captions=prior_captions,
+            turns=prior_turns,
+            target_sector=target,
             region=region,
-            sector_name=target,
         )
         try:
             message = await generate_with_openrouter_semantic(
-                parts, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,
+                messages, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,
             )
         except Exception as first_err:
             print(f"semantic first attempt failed: {first_err} - retrying with terser prompt")
-            parts[-1]["text"] = (
-                "Propose one new small edit distinct from any prior edit, inside the "
-                f"pixel rectangle (x1={region[0]}, y1={region[1]}, x2={region[2]}, "
-                f"y2={region[3]}). Return the full modified image and a one-sentence "
-                'CAPTION: describing what you changed.'
+            messages[-1]["content"] = (
+                f"Add one new small element to the {target} sector "
+                f"(pixel rectangle x1={region[0]}, y1={region[1]}, x2={region[2]}, "
+                f"y2={region[3]}). Keep all prior additions and the rest of the "
+                "image unchanged."
             )
             try:
                 message = await generate_with_openrouter_semantic(
-                    parts, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,
+                    messages, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,
                 )
             except Exception as retry_err:
                 print(f"semantic retry failed: {retry_err}")
@@ -415,24 +416,31 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             if image_out is not None:
                 generated_image = image_out
                 semantic_success = True
-                prior_lower = [c.lower() for c in prior_captions]
+                prior_captions_lower = [c.lower() for c in semantic_history.captions(session_id)]
+                # Replay the prior edit as an assistant turn next time, keeping
+                # the cumulative-edit chain visible to the model.
+                edit_b64 = shrink_for_api(image_out, max_edge=CAPTION_INPUT_MAX_EDGE)
+                turn_index = semantic_history.append_turn(
+                    session_id,
+                    SemanticTurn(target_sector=target, image_b64=edit_b64, caption=caption),
+                )
                 if caption is not None:
                     # Rare: the image model actually included text. Use it as-is.
-                    if any(caption.lower() in p or p in caption.lower() for p in prior_lower):
+                    if any(caption.lower() in p or p in caption.lower() for p in prior_captions_lower):
                         duplicate_caption = True
                 else:
                     # Common: image model dropped the text portion. Schedule
                     # a captioner call as a background task so the response
-                    # returns immediately. The entry's caption stays None
-                    # until the task lands.
-                    edit_b64 = shrink_for_api(image_out, max_edge=CAPTION_INPUT_MAX_EDGE)
+                    # returns immediately. The turn + entry caption is filled
+                    # in when the captioner returns.
                     original_b64 = semantic_history.original(session_id) or current_compressed
                     pending_caption_args = {
                         "session_id": session_id,
+                        "turn_index": turn_index,
                         "original_b64": original_b64,
                         "edit_b64": edit_b64,
                         "target": target,
-                        "prior_captions_lower": prior_lower,
+                        "prior_captions_lower": prior_captions_lower,
                     }
 
     if not semantic_success:
@@ -463,9 +471,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             duplicate_caption=duplicate_caption,
         )
         await _notify_backend(entry)
-        if semantic_success and caption:
-            semantic_history.append(session_manager.current_session_id, caption)
-        elif pending_caption_args is not None:
+        if pending_caption_args is not None:
             # Schedule the captioner to run after the response is sent. It
             # will late-update the entry's caption + edit_history when it
             # completes, without blocking this request.

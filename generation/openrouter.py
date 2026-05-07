@@ -9,7 +9,7 @@ import httpx
 from PIL import Image
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview")
+IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "google/gemini-3-pro-image-preview")
 # Text model used to caption the model's autonomous edit. The image model
 # routinely drops the text portion of `modalities: ["image", "text"]`, so we
 # round-trip a cheaper text-capable model instead.
@@ -168,17 +168,18 @@ async def caption_edit(
 
 
 async def generate_with_openrouter_semantic(
-    content_parts: list[dict],
+    messages: list[dict],
     api_key: str,
     *,
     client: httpx.AsyncClient | None = None,
     aspect_ratio: str | None = None,
 ) -> dict:
-    """Semantic-mode request. Returns the raw `message` dict so the caller can
-    parse image + caption itself."""
+    """Semantic-mode multi-turn request. Caller is responsible for emitting
+    a valid chat-completions `messages` array (see `semantic.build_messages`).
+    Returns the raw `message` dict from the final assistant turn."""
     payload = {
         "model": IMAGE_MODEL,
-        "messages": [{"role": "user", "content": content_parts}],
+        "messages": messages,
         "modalities": ["image", "text"],
         "image_config": _image_config(aspect_ratio),
     }

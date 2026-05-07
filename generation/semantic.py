@@ -1,4 +1,10 @@
-"""Per-session state for the semantic generation mode."""
+"""Per-session state and prompt construction for the semantic generation mode.
+
+The official Gemini Image docs (https://ai.google.dev/gemini-api/docs/image-generation)
+recommend multi-turn chat for cumulative editing: each prior generation should
+be replayed as an assistant turn so the model can reason over its own outputs
+visually rather than from text descriptions alone.
+"""
 from __future__ import annotations
 
 import time
@@ -9,29 +15,52 @@ from PIL import Image
 
 from openrouter import _extract_image
 
-HISTORY_WINDOW = 5
+# How many prior turns to replay back to the model. Each turn adds one image to
+# the request payload, so a tight window keeps requests well under OpenRouter's
+# 30MB limit even at 1024 px input compression.
+HISTORY_WINDOW = 2
 CAPTION_PREFIX = "CAPTION:"
+
+
+@dataclass
+class SemanticTurn:
+    """One prior edit replayed back to the model in subsequent calls."""
+
+    target_sector: str
+    image_b64: str
+    caption: str | None = None
 
 
 @dataclass
 class SemanticHistory:
     """In-memory, single-process state keyed by session id.
 
-    Holds the most recent `HISTORY_WINDOW` edit captions plus the original
-    (pre-edit) base image for each session.
+    Holds an ordered list of prior turns plus the original (pre-edit) base
+    image for each session.
     """
 
-    _captions: dict[str, list[str]] = field(default_factory=dict)
+    _turns: dict[str, list[SemanticTurn]] = field(default_factory=dict)
     _originals: dict[str, str] = field(default_factory=dict)
 
-    def captions(self, session_id: str) -> list[str]:
-        return list(self._captions.get(session_id, []))
+    def turns(self, session_id: str) -> list[SemanticTurn]:
+        return list(self._turns.get(session_id, []))
 
-    def append(self, session_id: str, caption: str) -> None:
-        bucket = self._captions.setdefault(session_id, [])
-        bucket.append(caption)
-        if len(bucket) > HISTORY_WINDOW:
-            del bucket[: len(bucket) - HISTORY_WINDOW]
+    def captions(self, session_id: str) -> list[str]:
+        """Convenience accessor for callers that only need text."""
+        return [t.caption for t in self._turns.get(session_id, []) if t.caption]
+
+    def append_turn(self, session_id: str, turn: SemanticTurn) -> int:
+        """Record a new turn. Returns the absolute index for later caption updates."""
+        bucket = self._turns.setdefault(session_id, [])
+        bucket.append(turn)
+        return len(bucket) - 1
+
+    def update_caption_at(self, session_id: str, index: int, caption: str) -> bool:
+        bucket = self._turns.get(session_id, [])
+        if 0 <= index < len(bucket):
+            bucket[index].caption = caption
+            return True
+        return False
 
     def original(self, session_id: str) -> str | None:
         return self._originals.get(session_id)
@@ -40,56 +69,71 @@ class SemanticHistory:
         self._originals.setdefault(session_id, image_b64)
 
     def clear(self, session_id: str) -> None:
-        self._captions.pop(session_id, None)
+        self._turns.pop(session_id, None)
         self._originals.pop(session_id, None)
 
 
-def build_prompt(
+def build_messages(
     original_b64: str,
-    current_b64: str,
-    captions: list[str],
+    turns: list[SemanticTurn],
+    target_sector: str,
     region: tuple[int, int, int, int],
-    sector_name: str,
 ) -> list[dict]:
-    """Assemble the `messages[0].content` payload for the semantic request."""
-    if captions:
-        history_block = "\n".join(
-            f'  {i + 1}. "{caption}"' for i, caption in enumerate(captions)
-        )
-    else:
-        history_block = "  (No prior edits yet.)"
+    """Build a multi-turn chat-completions `messages` array.
+
+    The conversation has the shape:
+      user      <original> + intro
+      assistant ack
+      user      "Add to <sector>" (per recent prior turn)
+      assistant <prior edit image> + caption  (per recent prior turn)
+      ...
+      user      "Now add ONE new element to <sector>... keep the rest unchanged."
+    """
+    intro = (
+        "We're going to edit this image iteratively. Each turn I will ask you "
+        "to add ONE new element to a specific region of the scene. Always keep "
+        "every prior addition and the rest of the scene unchanged. The new "
+        "element should feel like it belongs in the scene — like it was always "
+        "there, not like a pasted sticker."
+    )
+    messages: list[dict] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": original_b64}},
+                {"type": "text", "text": intro},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "Understood. I'll add one new element per turn and keep everything else unchanged.",
+        },
+    ]
+
+    for turn in turns[-HISTORY_WINDOW:]:
+        messages.append({
+            "role": "user",
+            "content": (
+                f"Add a new element to the {turn.target_sector} sector of the "
+                "scene. Keep all prior additions and the rest of the scene unchanged."
+            ),
+        })
+        assistant_content: list[dict] = [
+            {"type": "image_url", "image_url": {"url": turn.image_b64}},
+        ]
+        if turn.caption:
+            assistant_content.append({"type": "text", "text": turn.caption})
+        messages.append({"role": "assistant", "content": assistant_content})
 
     x1, y1, x2, y2 = region
-    instruction = (
-        "You are editing an image for a change-blindness installation. A "
-        "participant is about to briefly look away from the region you are "
-        "modifying; they should only notice the change if they come back to "
-        "look at it directly.\n\n"
-        "IMAGE 1 is the ORIGINAL, unedited scene.\n"
-        "IMAGE 2 is the scene as it currently stands after several prior edits.\n\n"
-        "Prior edits applied in this session (most recent last):\n"
-        f"{history_block}\n\n"
-        "Your task:\n"
-        "- Propose ONE new edit, distinct in subject, scale, and style from every "
-        "prior edit above. Do NOT repeat any object class, motif, colour palette, "
-        "or animal/vehicle/structure type that already appears in the prior list.\n"
-        f"- The edit MUST be ENTIRELY contained within the pixel rectangle "
-        f"(x1={x1}, y1={y1}, x2={x2}, y2={y2}) - the {sector_name} sector of a "
-        "3x3 grid. NO part of the edit may extend outside this rectangle. Do "
-        "not modify any pixel outside the rectangle. The rest of the scene must "
-        "be byte-identical to IMAGE 2.\n"
-        "- The edit should make semantic sense given what is already in the "
-        "scene - it should feel like it belongs, not like a pasted sticker.\n"
-        "- Return the FULL modified image (not a crop), and a ONE-SENTENCE caption "
-        'of exactly what you added or changed, prefixed with "CAPTION:". '
-        "Example: CAPTION: a small paper boat now drifts across the puddle on the right."
+    final = (
+        f"Now add ONE new element to the {target_sector} sector of the scene "
+        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). It should be "
+        "different from every prior addition above and feel native to the "
+        "scene. Keep every prior addition and the rest of the image unchanged."
     )
-
-    return [
-        {"type": "image_url", "image_url": {"url": original_b64}},
-        {"type": "image_url", "image_url": {"url": current_b64}},
-        {"type": "text", "text": instruction},
-    ]
+    messages.append({"role": "user", "content": final})
+    return messages
 
 
 def _extract_caption(content) -> str | None:

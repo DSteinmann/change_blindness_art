@@ -3,28 +3,51 @@ from __future__ import annotations
 
 from PIL import Image
 
-from semantic import SemanticHistory, build_prompt, degenerate_caption, parse_response
+from semantic import (
+    SemanticHistory,
+    SemanticTurn,
+    build_messages,
+    degenerate_caption,
+    parse_response,
+)
 
 
 def test_history_empty_for_unknown_session():
     h = SemanticHistory()
+    assert h.turns("sess-a") == []
     assert h.captions("sess-a") == []
     assert h.original("sess-a") is None
 
 
-def test_append_captions_respects_window_of_five():
+def test_append_turn_records_and_returns_index():
     h = SemanticHistory()
-    for i in range(8):
-        h.append("sess-a", f"edit {i}")
-    assert h.captions("sess-a") == [f"edit {i}" for i in range(3, 8)]
+    i0 = h.append_turn("sess-a", SemanticTurn("TL", "data:image/png;base64,AAA", "first edit"))
+    i1 = h.append_turn("sess-a", SemanticTurn("BR", "data:image/png;base64,BBB", "second edit"))
+    assert (i0, i1) == (0, 1)
+    assert h.captions("sess-a") == ["first edit", "second edit"]
+    assert [t.target_sector for t in h.turns("sess-a")] == ["TL", "BR"]
 
 
 def test_sessions_are_isolated():
     h = SemanticHistory()
-    h.append("sess-a", "first")
-    h.append("sess-b", "other")
+    h.append_turn("sess-a", SemanticTurn("TL", "x", "first"))
+    h.append_turn("sess-b", SemanticTurn("BR", "y", "other"))
     assert h.captions("sess-a") == ["first"]
     assert h.captions("sess-b") == ["other"]
+
+
+def test_update_caption_at_replaces_caption():
+    h = SemanticHistory()
+    idx = h.append_turn("sess-a", SemanticTurn("TL", "x", caption=None))
+    assert h.update_caption_at("sess-a", idx, "a small bird appeared") is True
+    assert h.turns("sess-a")[0].caption == "a small bird appeared"
+
+
+def test_update_caption_at_returns_false_when_index_invalid():
+    h = SemanticHistory()
+    h.append_turn("sess-a", SemanticTurn("TL", "x"))
+    assert h.update_caption_at("sess-a", 99, "anything") is False
+    assert h.update_caption_at("nope", 0, "anything") is False
 
 
 def test_set_original_is_idempotent_per_session():
@@ -34,60 +57,85 @@ def test_set_original_is_idempotent_per_session():
     assert h.original("sess-a") == "data:image/png;base64,AAA"
 
 
-def test_clear_drops_captions_and_original():
+def test_clear_drops_turns_and_original():
     h = SemanticHistory()
-    h.append("sess-a", "edit")
+    h.append_turn("sess-a", SemanticTurn("TL", "x", "edit"))
     h.set_original("sess-a", "data:image/png;base64,AAA")
     h.clear("sess-a")
-    assert h.captions("sess-a") == []
+    assert h.turns("sess-a") == []
     assert h.original("sess-a") is None
 
 
-def test_build_prompt_returns_two_images_then_text(tiny_png_b64):
-    parts = build_prompt(
+def test_build_messages_starts_with_user_image_then_assistant_ack(tiny_png_b64):
+    messages = build_messages(
         original_b64=tiny_png_b64,
-        current_b64=tiny_png_b64,
-        captions=[],
+        turns=[],
+        target_sector="TL",
         region=(0, 0, 100, 100),
-        sector_name="TL",
     )
-    assert len(parts) == 3
-    assert parts[0]["type"] == "image_url"
-    assert parts[0]["image_url"]["url"] == tiny_png_b64
-    assert parts[1]["type"] == "image_url"
-    assert parts[2]["type"] == "text"
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"][0]["image_url"]["url"] == tiny_png_b64
+    assert messages[1]["role"] == "assistant"
+    # Final user turn carries the new instruction.
+    assert messages[-1]["role"] == "user"
+    assert "TL" in messages[-1]["content"]
+    assert "x1=0, y1=0, x2=100, y2=100" in messages[-1]["content"]
 
 
-def test_build_prompt_renders_region_bounds_and_sector(tiny_png_b64):
-    parts = build_prompt(
-        original_b64=tiny_png_b64,
-        current_b64=tiny_png_b64,
-        captions=[],
-        region=(683, 0, 1024, 341),
-        sector_name="TR",
+def test_build_messages_replays_prior_turns_as_assistant(tiny_png_b64):
+    turns = [
+        SemanticTurn("TR", tiny_png_b64, "a butterfly drifted in"),
+        SemanticTurn("BL", tiny_png_b64, "a paper boat sailed"),
+    ]
+    messages = build_messages(
+        original_b64=tiny_png_b64, turns=turns,
+        target_sector="MC", region=(0, 0, 10, 10),
     )
-    text = parts[2]["text"]
-    assert "(x1=683, y1=0, x2=1024, y2=341)" in text
-    assert "TR" in text
+    # intro-user, intro-ack, [user, assistant] x 2, final-user = 7
+    assert len(messages) == 7
+    # Check the first prior turn is replayed as user-then-assistant.
+    assert messages[2]["role"] == "user"
+    assert "TR" in messages[2]["content"]
+    assert messages[3]["role"] == "assistant"
+    image_parts = [p for p in messages[3]["content"] if p["type"] == "image_url"]
+    text_parts = [p for p in messages[3]["content"] if p["type"] == "text"]
+    assert len(image_parts) == 1
+    assert text_parts[0]["text"] == "a butterfly drifted in"
 
 
-def test_build_prompt_lists_captions_in_order(tiny_png_b64):
-    parts = build_prompt(
-        original_b64=tiny_png_b64,
-        current_b64=tiny_png_b64,
-        captions=["first edit", "second edit", "third edit"],
-        region=(0, 0, 10, 10),
-        sector_name="MC",
+def test_build_messages_caps_replay_to_history_window(tiny_png_b64):
+    turns = [SemanticTurn(f"S{i}", tiny_png_b64, f"edit {i}") for i in range(8)]
+    messages = build_messages(
+        original_b64=tiny_png_b64, turns=turns,
+        target_sector="TL", region=(0, 0, 1, 1),
     )
-    text = parts[2]["text"]
-    assert '1. "first edit"' in text
-    assert '2. "second edit"' in text
-    assert '3. "third edit"' in text
+    assistant_turns_with_images = [
+        m for m in messages
+        if m["role"] == "assistant"
+        and isinstance(m["content"], list)
+        and any(p.get("type") == "image_url" for p in m["content"])
+    ]
+    # HISTORY_WINDOW (=2) prior turns get replayed.
+    assert len(assistant_turns_with_images) == 2
+    captions_in_order = [
+        next(p["text"] for p in m["content"] if p["type"] == "text")
+        for m in assistant_turns_with_images
+    ]
+    assert captions_in_order == ["edit 6", "edit 7"]
 
 
-def test_build_prompt_says_no_prior_edits_when_empty(tiny_png_b64):
-    text = build_prompt(tiny_png_b64, tiny_png_b64, [], (0, 0, 1, 1), "TL")[2]["text"]
-    assert "No prior edits yet" in text
+def test_build_messages_assistant_turn_omits_text_when_caption_missing(tiny_png_b64):
+    turns = [SemanticTurn("TR", tiny_png_b64, caption=None)]
+    messages = build_messages(
+        original_b64=tiny_png_b64, turns=turns,
+        target_sector="MC", region=(0, 0, 10, 10),
+    )
+    assistant_with_image = next(
+        m for m in messages
+        if m["role"] == "assistant" and isinstance(m["content"], list)
+    )
+    text_parts = [p for p in assistant_with_image["content"] if p["type"] == "text"]
+    assert text_parts == []
 
 
 def test_parse_response_extracts_image_and_caption(fake_openrouter_response):
