@@ -49,13 +49,15 @@ async def _relay_blink_onset(state: str) -> None:
     if _relay_client is None:
         return
     try:
-        await _relay_client.post(f"{settings.generation_api}/session/blink", timeout=2.0)
+        await _relay_client.post(
+            f"{settings.generation_internal_url}/session/blink", timeout=2.0,
+        )
     except Exception as exc:
         _blink_relay_failures += 1
         if _blink_relay_failures <= 3 or _blink_relay_failures % 50 == 0:
             logger.warning(
                 "blink relay #%d to %s/session/blink failed: %s",
-                _blink_relay_failures, settings.generation_api, exc,
+                _blink_relay_failures, settings.generation_internal_url, exc,
             )
 
 

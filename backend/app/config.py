@@ -29,7 +29,16 @@ class Settings:
     fixation_duration_ms: int = int(os.getenv("FIXATION_DURATION_MS", "1000"))
     gaze_smoothing_factor: float = float(os.getenv("GAZE_SMOOTHING_FACTOR", "0.08"))
     gaze_stale_ms: int = int(os.getenv("GAZE_STALE_MS", "250"))
+    # URL the *browser* should use to reach the generation service. Exposed
+    # via /config and embedded in HTML responses, so it must resolve from the
+    # user's machine.
     generation_api: str = os.getenv("GENERATION_API", "http://localhost:8001")
+    # URL the *backend container* uses to reach the generation service for
+    # server-to-server calls (e.g. the blink relay). In docker-compose this is
+    # the service hostname; in bare-metal dev it stays localhost.
+    generation_internal_url: str = os.getenv(
+        "GENERATION_INTERNAL_URL", "http://localhost:8001",
+    )
 
 
 @lru_cache(maxsize=1)
