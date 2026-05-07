@@ -435,13 +435,14 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
                 else:
                     # Common: image model dropped the text portion. Schedule
                     # a captioner call as a background task so the response
-                    # returns immediately. The turn + entry caption is filled
-                    # in when the captioner returns.
-                    original_b64 = semantic_history.original(session_id) or current_compressed
+                    # returns immediately. We pass the prior cumulative state
+                    # (current_compressed = the request's input image) as the
+                    # "before" image so the captioner describes only THIS
+                    # turn's new addition rather than every accumulated edit.
                     pending_caption_args = {
                         "session_id": session_id,
                         "turn_index": turn_index,
-                        "original_b64": original_b64,
+                        "original_b64": current_compressed,
                         "edit_b64": edit_b64,
                         "target": target,
                         "prior_captions_lower": prior_captions_lower,
