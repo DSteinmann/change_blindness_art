@@ -32,8 +32,14 @@ export class FixationTracker extends EventTarget {
   }
 
   update(gaze, smoothed, isStale) {
-    if (!gaze?.valid || isStale) {
+    if (isStale) {
       this.clear();
+      return;
+    }
+    if (!gaze?.valid) {
+      // Single dropped sample (likely a momentary eye-lost or blink heartbeat).
+      // Don't reset the fixation timer — `isStale` already covers truly lost
+      // gaze via the aggregate stale window.
       return;
     }
 
