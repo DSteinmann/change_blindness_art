@@ -45,7 +45,7 @@ async def test_semantic_request_rejects_missing_api_key(tiny_png_b64):
             await generate_with_openrouter_semantic(messages, "", client=client)
 
 
-async def test_semantic_payload_is_multi_turn_with_intro_and_replay(tiny_png_b64):
+async def test_semantic_payload_is_single_user_turn_with_all_images(tiny_png_b64):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -66,22 +66,15 @@ async def test_semantic_payload_is_multi_turn_with_intro_and_replay(tiny_png_b64
 
     body = captured["body"]
     sent_messages = body["messages"]
-    # First message is user with the original image; last is the new instruction.
+    # All images and instructions are collapsed into one user message — keeps
+    # OpenRouter from stripping assistant content[] in the multi-turn variant.
+    assert len(sent_messages) == 1
     assert sent_messages[0]["role"] == "user"
-    first_user_images = [p for p in sent_messages[0]["content"] if p["type"] == "image_url"]
-    assert len(first_user_images) == 1
-    assert sent_messages[-1]["role"] == "user"
-    assert "TL" in sent_messages[-1]["content"]
-    # An assistant turn replays the prior butterfly edit.
-    replayed_assistant = [
-        m for m in sent_messages
-        if m["role"] == "assistant" and isinstance(m["content"], list)
-    ]
-    assert len(replayed_assistant) == 1
-    assert any(
-        p.get("type") == "text" and p.get("text") == "a butterfly drifted in"
-        for p in replayed_assistant[0]["content"]
-    )
+    images = [p for p in sent_messages[0]["content"] if p["type"] == "image_url"]
+    assert len(images) == 2  # original + 1 prior edit
+    text = next(p["text"] for p in sent_messages[0]["content"] if p["type"] == "text")
+    assert "TL" in text
+    assert "a butterfly drifted in" in text
     assert body["image_config"]["image_size"] == "2K"
 
 

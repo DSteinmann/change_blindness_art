@@ -398,12 +398,16 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             )
         except Exception as first_err:
             print(f"semantic first attempt failed: {first_err} - retrying with terser prompt")
-            messages[-1]["content"] = (
+            terser = (
                 f"Add one new small element to the {target} sector "
                 f"(pixel rectangle x1={region[0]}, y1={region[1]}, x2={region[2]}, "
                 f"y2={region[3]}). Keep all prior additions and the rest of the "
                 "image unchanged."
             )
+            for part in messages[-1]["content"]:
+                if part.get("type") == "text":
+                    part["text"] = terser
+                    break
             try:
                 message = await generate_with_openrouter_semantic(
                     messages, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,

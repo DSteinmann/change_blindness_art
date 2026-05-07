@@ -66,41 +66,46 @@ def test_clear_drops_turns_and_original():
     assert h.original("sess-a") is None
 
 
-def test_build_messages_starts_with_user_image_then_assistant_ack(tiny_png_b64):
+def test_build_messages_returns_single_user_turn_with_original_only(tiny_png_b64):
     messages = build_messages(
         original_b64=tiny_png_b64,
         turns=[],
         target_sector="TL",
         region=(0, 0, 100, 100),
     )
-    assert messages[0]["role"] == "user"
-    assert messages[0]["content"][0]["image_url"]["url"] == tiny_png_b64
-    assert messages[1]["role"] == "assistant"
-    # Final user turn carries the new instruction.
-    assert messages[-1]["role"] == "user"
-    assert "TL" in messages[-1]["content"]
-    assert "x1=0, y1=0, x2=100, y2=100" in messages[-1]["content"]
+    assert len(messages) == 1
+    msg = messages[0]
+    assert msg["role"] == "user"
+    image_parts = [p for p in msg["content"] if p["type"] == "image_url"]
+    text_parts = [p for p in msg["content"] if p["type"] == "text"]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"] == tiny_png_b64
+    text = text_parts[0]["text"]
+    assert "IMAGE 0" in text
+    assert "TL" in text
+    assert "x1=0, y1=0, x2=100, y2=100" in text
 
 
-def test_build_messages_replays_prior_turns_as_assistant(tiny_png_b64):
+def test_build_messages_includes_prior_edit_images_in_user_turn(tiny_png_b64):
+    edit_a = tiny_png_b64.replace("AAA", "PRIOR_A") if "AAA" in tiny_png_b64 else tiny_png_b64
+    edit_b = tiny_png_b64.replace("AAA", "PRIOR_B") if "AAA" in tiny_png_b64 else tiny_png_b64
     turns = [
-        SemanticTurn("TR", tiny_png_b64, "a butterfly drifted in"),
-        SemanticTurn("BL", tiny_png_b64, "a paper boat sailed"),
+        SemanticTurn("TR", edit_a, "a butterfly drifted in"),
+        SemanticTurn("BL", edit_b, "a paper boat sailed"),
     ]
     messages = build_messages(
         original_b64=tiny_png_b64, turns=turns,
         target_sector="MC", region=(0, 0, 10, 10),
     )
-    # intro-user, intro-ack, [user, assistant] x 2, final-user = 7
-    assert len(messages) == 7
-    # Check the first prior turn is replayed as user-then-assistant.
-    assert messages[2]["role"] == "user"
-    assert "TR" in messages[2]["content"]
-    assert messages[3]["role"] == "assistant"
-    image_parts = [p for p in messages[3]["content"] if p["type"] == "image_url"]
-    text_parts = [p for p in messages[3]["content"] if p["type"] == "text"]
-    assert len(image_parts) == 1
-    assert text_parts[0]["text"] == "a butterfly drifted in"
+    assert len(messages) == 1
+    image_urls = [p["image_url"]["url"] for p in messages[0]["content"] if p["type"] == "image_url"]
+    # original + 2 prior edits = 3 images.
+    assert len(image_urls) == 3
+    text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+    assert "IMAGE 0 is the ORIGINAL" in text
+    assert "IMAGE 1" in text and "TR" in text and "a butterfly drifted in" in text
+    assert "IMAGE 2" in text and "BL" in text and "a paper boat sailed" in text
+    assert "Produce a new image based on IMAGE 2" in text
 
 
 def test_build_messages_caps_replay_to_history_window(tiny_png_b64):
@@ -109,33 +114,27 @@ def test_build_messages_caps_replay_to_history_window(tiny_png_b64):
         original_b64=tiny_png_b64, turns=turns,
         target_sector="TL", region=(0, 0, 1, 1),
     )
-    assistant_turns_with_images = [
-        m for m in messages
-        if m["role"] == "assistant"
-        and isinstance(m["content"], list)
-        and any(p.get("type") == "image_url" for p in m["content"])
-    ]
-    # HISTORY_WINDOW (=2) prior turns get replayed.
-    assert len(assistant_turns_with_images) == 2
-    captions_in_order = [
-        next(p["text"] for p in m["content"] if p["type"] == "text")
-        for m in assistant_turns_with_images
-    ]
-    assert captions_in_order == ["edit 6", "edit 7"]
+    image_count = sum(1 for p in messages[0]["content"] if p["type"] == "image_url")
+    # 1 original + HISTORY_WINDOW (=2) prior edit images.
+    assert image_count == 3
+    text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+    # Last two edits are the ones replayed.
+    assert "edit 6" in text
+    assert "edit 7" in text
+    assert "edit 5" not in text
 
 
-def test_build_messages_assistant_turn_omits_text_when_caption_missing(tiny_png_b64):
+def test_build_messages_omits_caption_label_when_missing(tiny_png_b64):
     turns = [SemanticTurn("TR", tiny_png_b64, caption=None)]
     messages = build_messages(
         original_b64=tiny_png_b64, turns=turns,
         target_sector="MC", region=(0, 0, 10, 10),
     )
-    assistant_with_image = next(
-        m for m in messages
-        if m["role"] == "assistant" and isinstance(m["content"], list)
-    )
-    text_parts = [p for p in assistant_with_image["content"] if p["type"] == "text"]
-    assert text_parts == []
+    text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+    # When the caption is missing, the label still mentions the sector but no
+    # quoted description.
+    assert "IMAGE 1" in text
+    assert "TR" in text
 
 
 def test_parse_response_extracts_image_and_caption(fake_openrouter_response):

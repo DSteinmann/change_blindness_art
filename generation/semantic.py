@@ -79,61 +79,52 @@ def build_messages(
     target_sector: str,
     region: tuple[int, int, int, int],
 ) -> list[dict]:
-    """Build a multi-turn chat-completions `messages` array.
+    """Build a chat-completions `messages` array.
 
-    The conversation has the shape:
-      user      <original> + intro
-      assistant ack
-      user      "Add to <sector>" (per recent prior turn)
-      assistant <prior edit image> + caption  (per recent prior turn)
-      ...
-      user      "Now add ONE new element to <sector>... keep the rest unchanged."
+    Single user turn carrying the original image plus up to `HISTORY_WINDOW`
+    most-recent prior edits as labelled images. We avoid splitting prior edits
+    across assistant turns because OpenRouter has been observed to strip
+    assistant `content[]` for some Gemini models, breaking cumulative editing.
     """
-    intro = (
-        "We're going to edit this image iteratively. Each turn I will ask you "
-        "to add ONE new element to a specific region of the scene. Always keep "
-        "every prior addition and the rest of the scene unchanged. The new "
-        "element should feel like it belongs in the scene — like it was always "
-        "there, not like a pasted sticker."
-    )
-    messages: list[dict] = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": original_b64}},
-                {"type": "text", "text": intro},
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": "Understood. I'll add one new element per turn and keep everything else unchanged.",
-        },
+    recent = turns[-HISTORY_WINDOW:]
+    content: list[dict] = [
+        {"type": "image_url", "image_url": {"url": original_b64}},
     ]
+    for turn in recent:
+        content.append({"type": "image_url", "image_url": {"url": turn.image_b64}})
 
-    for turn in turns[-HISTORY_WINDOW:]:
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Add a new element to the {turn.target_sector} sector of the "
-                "scene. Keep all prior additions and the rest of the scene unchanged."
-            ),
-        })
-        assistant_content: list[dict] = [
-            {"type": "image_url", "image_url": {"url": turn.image_b64}},
-        ]
+    label_lines = ["IMAGE 0 is the ORIGINAL scene."]
+    for i, turn in enumerate(recent, start=1):
         if turn.caption:
-            assistant_content.append({"type": "text", "text": turn.caption})
-        messages.append({"role": "assistant", "content": assistant_content})
+            label_lines.append(
+                f"IMAGE {i} is the scene after a prior edit "
+                f"(in the {turn.target_sector} sector): {turn.caption}"
+            )
+        else:
+            label_lines.append(
+                f"IMAGE {i} is the scene after a prior edit "
+                f"in the {turn.target_sector} sector."
+            )
+
+    if recent:
+        anchor = f"Produce a new image based on IMAGE {len(recent)} (the most recent state)."
+    else:
+        anchor = "Produce a new image based on IMAGE 0."
 
     x1, y1, x2, y2 = region
-    final = (
-        f"Now add ONE new element to the {target_sector} sector of the scene "
-        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). It should be "
-        "different from every prior addition above and feel native to the "
-        "scene. Keep every prior addition and the rest of the image unchanged."
+    instruction = (
+        "\n".join(label_lines)
+        + "\n\n"
+        + anchor
+        + f" Add ONE new element in the {target_sector} sector "
+        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). "
+        "The new element should feel like it belongs in the scene — like it was "
+        "always there, not like a pasted sticker. Keep every prior addition "
+        "visible and the rest of the image unchanged."
     )
-    messages.append({"role": "user", "content": final})
-    return messages
+    content.append({"type": "text", "text": instruction})
+
+    return [{"role": "user", "content": content}]
 
 
 def _extract_caption(content) -> str | None:
