@@ -28,6 +28,7 @@ from sectors import (
     create_mask,
     decode_base64_image,
     sector_name,
+    shrink_for_api,
 )
 from semantic import (
     SemanticHistory,
@@ -347,11 +348,14 @@ async def _generate_impl(request: GenerateRequest) -> Response:
 
     if GENERATION_MODE == "semantic" and OPENROUTER_API_KEY:
         session_id = session_manager.current_session_id or "anon"
-        semantic_history.set_original(session_id, request.image_base64)
+        # Bound payload size: OpenRouter rejects images >30MB and we send two
+        # per call. Shrink the frontend's PNG to a JPEG with a 1280 px max edge.
+        current_compressed = shrink_for_api(init_image)
+        semantic_history.set_original(session_id, current_compressed)
         prior_captions = semantic_history.captions(session_id)
         parts = build_prompt(
-            original_b64=semantic_history.original(session_id) or request.image_base64,
-            current_b64=request.image_base64,
+            original_b64=semantic_history.original(session_id) or current_compressed,
+            current_b64=current_compressed,
             captions=prior_captions,
             region=region,
             sector_name=target,
