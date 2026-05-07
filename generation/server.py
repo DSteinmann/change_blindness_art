@@ -25,6 +25,7 @@ from prompts import PromptBank
 from sectors import (
     calculate_opposite_region,
     calculate_sector_region,
+    composite_sector,
     create_mask,
     decode_base64_image,
     sector_name,
@@ -400,6 +401,12 @@ async def _generate_impl(request: GenerateRequest) -> Response:
             generated_image = init_image
         caption = None
         duplicate_caption = False
+
+    # Sector compositing: keep non-target pixels byte-identical to the previous
+    # state. The model re-renders the whole canvas; without this, every call
+    # introduces drift in regions we never asked it to modify.
+    if generated_image is not init_image:
+        generated_image = composite_sector(init_image, generated_image, region)
 
     latency_ms = (time.perf_counter() - t_start) * 1000
     entry: dict = {}

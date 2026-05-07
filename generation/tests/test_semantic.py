@@ -147,3 +147,49 @@ def test_shrink_for_api_passes_small_images_through():
     import base64, io
     decoded = Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
     assert decoded.size == (200, 200)
+
+
+def test_composite_sector_keeps_non_target_pixels_identical():
+    from PIL import Image
+    from sectors import composite_sector
+
+    base = Image.new("RGB", (300, 300), (10, 20, 30))
+    edit = Image.new("RGB", (300, 300), (200, 200, 200))
+    region = (100, 100, 200, 200)  # central square
+
+    out = composite_sector(base, edit, region)
+    # Inside the region: edit's colour
+    assert out.getpixel((150, 150)) == (200, 200, 200)
+    # Just outside: base's colour, unchanged
+    assert out.getpixel((50, 50)) == (10, 20, 30)
+    assert out.getpixel((250, 250)) == (10, 20, 30)
+    assert out.getpixel((99, 99)) == (10, 20, 30)
+
+
+def test_composite_sector_handles_resolution_mismatch():
+    from PIL import Image
+    from sectors import composite_sector
+
+    base = Image.new("RGB", (1000, 1000), (10, 20, 30))
+    # Model returned a half-res output:
+    edit = Image.new("RGB", (500, 500), (200, 200, 200))
+    region = (200, 200, 600, 600)  # in base coordinates
+
+    out = composite_sector(base, edit, region)
+    assert out.size == base.size
+    # Sampled inside the target sector → patched
+    assert out.getpixel((400, 400)) == (200, 200, 200)
+    # Sampled outside → base
+    assert out.getpixel((50, 50)) == (10, 20, 30)
+    assert out.getpixel((900, 900)) == (10, 20, 30)
+
+
+def test_composite_sector_does_not_mutate_inputs():
+    from PIL import Image
+    from sectors import composite_sector
+
+    base = Image.new("RGB", (100, 100), (10, 20, 30))
+    edit = Image.new("RGB", (100, 100), (200, 200, 200))
+    composite_sector(base, edit, (25, 25, 75, 75))
+    assert base.getpixel((50, 50)) == (10, 20, 30)
+    assert edit.getpixel((10, 10)) == (200, 200, 200)
