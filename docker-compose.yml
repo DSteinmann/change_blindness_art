@@ -12,6 +12,10 @@ services:
       # running on the host machine.
       - PUPIL_HOST=host.docker.internal
       - PUPIL_REMOTE_PORT=50020
+      # Reach the generation service by its compose service name. Without
+      # this, GENERATION_API defaults to localhost:8001, which is the backend
+      # container itself, and the blink relay POST silently fails.
+      - GENERATION_API=http://generation:8001
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

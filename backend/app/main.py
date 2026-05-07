@@ -38,16 +38,25 @@ patch_usage_log: list[dict[str, Any]] = []
 _relay_client: httpx.AsyncClient | None = None
 
 
+_blink_relay_failures = 0
+
+
 async def _relay_blink_onset(state: str) -> None:
     """Fire-and-forget POST so the generation service can increment its
     per-session blink counter. Swallow failures — blink recording is telemetry,
-    not load-bearing."""
+    not load-bearing — but log loudly enough to diagnose misconfiguration."""
+    global _blink_relay_failures
     if _relay_client is None:
         return
     try:
         await _relay_client.post(f"{settings.generation_api}/session/blink", timeout=2.0)
     except Exception as exc:
-        logger.debug("blink relay failed: %s", exc)
+        _blink_relay_failures += 1
+        if _blink_relay_failures <= 3 or _blink_relay_failures % 50 == 0:
+            logger.warning(
+                "blink relay #%d to %s/session/blink failed: %s",
+                _blink_relay_failures, settings.generation_api, exc,
+            )
 
 
 pupil_source = PupilSource(settings, stream_hub.broadcast, on_blink_onset=_relay_blink_onset)
