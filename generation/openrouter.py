@@ -60,6 +60,13 @@ async def _post_chat(payload: dict, api_key: str, client: httpx.AsyncClient) -> 
     return choices[0].get("message", {})
 
 
+def _image_config(aspect_ratio: str | None) -> dict:
+    cfg: dict = {"image_size": IMAGE_SIZE}
+    if aspect_ratio:
+        cfg["aspect_ratio"] = aspect_ratio
+    return cfg
+
+
 async def generate_with_openrouter(
     image: Image.Image,
     prompt: str,
@@ -67,6 +74,7 @@ async def generate_with_openrouter(
     api_key: str,
     *,
     client: httpx.AsyncClient | None = None,
+    aspect_ratio: str | None = None,
 ) -> Image.Image:
     """Cycling-mode generation: one image in, one image out."""
     buf = io.BytesIO()
@@ -89,7 +97,7 @@ async def generate_with_openrouter(
             ],
         }],
         "modalities": ["image", "text"],
-        "image_config": {"image_size": IMAGE_SIZE},
+        "image_config": _image_config(aspect_ratio),
     }
     owned, created = _resolve_client(client)
     try:
@@ -108,6 +116,7 @@ async def generate_with_openrouter_semantic(
     api_key: str,
     *,
     client: httpx.AsyncClient | None = None,
+    aspect_ratio: str | None = None,
 ) -> dict:
     """Semantic-mode request. Returns the raw `message` dict so the caller can
     parse image + caption itself."""
@@ -115,7 +124,7 @@ async def generate_with_openrouter_semantic(
         "model": IMAGE_MODEL,
         "messages": [{"role": "user", "content": content_parts}],
         "modalities": ["image", "text"],
-        "image_config": {"image_size": IMAGE_SIZE},
+        "image_config": _image_config(aspect_ratio),
     }
     owned, created = _resolve_client(client)
     try:

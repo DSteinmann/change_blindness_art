@@ -193,3 +193,47 @@ def test_composite_sector_does_not_mutate_inputs():
     composite_sector(base, edit, (25, 25, 75, 75))
     assert base.getpixel((50, 50)) == (10, 20, 30)
     assert edit.getpixel((10, 10)) == (200, 200, 200)
+
+
+def test_infer_aspect_ratio_snaps_to_supported_label():
+    from sectors import infer_aspect_ratio
+
+    assert infer_aspect_ratio(1024, 1024) == "1:1"
+    assert infer_aspect_ratio(1024, 768) == "4:3"
+    assert infer_aspect_ratio(768, 1024) == "3:4"
+    assert infer_aspect_ratio(1920, 1080) == "16:9"
+    assert infer_aspect_ratio(1080, 1920) == "9:16"
+    assert infer_aspect_ratio(1500, 1000) == "3:2"
+    # Off-list ratio: snap to nearest. 1234x567 = 2.18, nearest is 16:9 (1.78).
+    assert infer_aspect_ratio(1234, 567) == "16:9"
+
+
+def test_composite_sector_feathers_edges_when_feather_positive():
+    from PIL import Image
+    from sectors import composite_sector
+
+    base = Image.new("RGB", (200, 200), (0, 0, 0))
+    edit = Image.new("RGB", (200, 200), (255, 255, 255))
+    out = composite_sector(base, edit, (50, 50, 150, 150), feather=10)
+
+    # Center: fully patched
+    assert out.getpixel((100, 100)) == (255, 255, 255)
+    # Outside region: pure base
+    assert out.getpixel((10, 10)) == (0, 0, 0)
+    assert out.getpixel((190, 190)) == (0, 0, 0)
+    # Just inside the region edge: blended (not pure base, not pure edit).
+    edge_px = out.getpixel((52, 52))
+    assert 0 < edge_px[0] < 255
+
+
+def test_composite_sector_feather_zero_is_hard_edge():
+    from PIL import Image
+    from sectors import composite_sector
+
+    base = Image.new("RGB", (100, 100), (10, 20, 30))
+    edit = Image.new("RGB", (100, 100), (200, 200, 200))
+    out = composite_sector(base, edit, (25, 25, 75, 75), feather=0)
+    # First pixel inside region is the pure edit colour.
+    assert out.getpixel((25, 25)) == (200, 200, 200)
+    # Pixel just outside is pure base.
+    assert out.getpixel((24, 24)) == (10, 20, 30)

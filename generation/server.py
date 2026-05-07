@@ -28,6 +28,7 @@ from sectors import (
     composite_sector,
     create_mask,
     decode_base64_image,
+    infer_aspect_ratio,
     sector_name,
     shrink_for_api,
 )
@@ -342,6 +343,11 @@ async def _generate_impl(request: GenerateRequest) -> Response:
     # Mask is unused by OpenRouter but kept for any future local backend.
     _ = create_mask(init_image.size, region)
 
+    # Snap the input's aspect to the closest model-supported ratio so the
+    # model's output keeps the same proportions; otherwise sector compositing
+    # maps the wrong pixels.
+    aspect_ratio = infer_aspect_ratio(*init_image.size)
+
     caption: str | None = None
     duplicate_caption = False
     semantic_success = False
@@ -362,7 +368,9 @@ async def _generate_impl(request: GenerateRequest) -> Response:
             sector_name=target,
         )
         try:
-            message = await generate_with_openrouter_semantic(parts, OPENROUTER_API_KEY)
+            message = await generate_with_openrouter_semantic(
+                parts, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,
+            )
         except Exception as first_err:
             print(f"semantic first attempt failed: {first_err} - retrying with terser prompt")
             parts[-1]["text"] = (
@@ -372,7 +380,9 @@ async def _generate_impl(request: GenerateRequest) -> Response:
                 'CAPTION: describing what you changed.'
             )
             try:
-                message = await generate_with_openrouter_semantic(parts, OPENROUTER_API_KEY)
+                message = await generate_with_openrouter_semantic(
+                    parts, OPENROUTER_API_KEY, aspect_ratio=aspect_ratio,
+                )
             except Exception as retry_err:
                 print(f"semantic retry failed: {retry_err}")
                 message = None
@@ -397,6 +407,7 @@ async def _generate_impl(request: GenerateRequest) -> Response:
             try:
                 generated_image = await generate_with_openrouter(
                     init_image, prompt, region, OPENROUTER_API_KEY,
+                    aspect_ratio=aspect_ratio,
                 )
             except Exception as api_err:
                 print(f"OpenRouter API failed: {api_err}")
