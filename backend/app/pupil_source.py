@@ -110,6 +110,7 @@ class PupilSource:
         last_gaze_emit = time.monotonic()
         samples_forwarded = 0
         surface_samples = 0
+        blinks_received = 0
         heartbeat_interval = 0.1  # Emit invalid sample if no gaze for this long
 
         while not self._stop_event.is_set():
@@ -190,6 +191,12 @@ class PupilSource:
                         blink_state = "closed" if blink_type == "onset" else "open"
                         ts_raw = blink_obj.get("timestamp") or blink_obj.get("timestamp_epoch")
                         ts = float(ts_raw) if ts_raw is not None else time.time()
+                        blinks_received += 1
+                        if blinks_received <= 5 or blinks_received % 20 == 0:
+                            logger.info(
+                                f"blink #{blinks_received} type={blink_type} "
+                                f"state={blink_state} ts={ts}"
+                            )
                         self._dispatch({"ts": ts, "event": "blink", "state": blink_state})
                         if blink_state == "closed":
                             self._dispatch_blink_onset(blink_state)
@@ -211,7 +218,10 @@ class PupilSource:
                     source = f"surface '{self.surface_name}' ({surface_samples} pts)"
                 else:
                     source = "no surface data - check Surface Tracker setup!"
-                logger.info(f"Forwarded {samples_forwarded} gaze samples - source: {source}")
+                logger.info(
+                    f"Forwarded {samples_forwarded} gaze samples - source: {source} "
+                    f"| blinks received this session: {blinks_received}"
+                )
                 last_log = now
                 samples_forwarded = 0
                 surface_samples = 0
