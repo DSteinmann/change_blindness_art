@@ -181,7 +181,7 @@ def test_fal_backend_is_used_when_enabled(monkeypatch, tmp_path):
     fal_call = AsyncMock(return_value=result_image)
     server_semantic_call = AsyncMock(side_effect=AssertionError("openrouter should not be called"))
 
-    with patch("server.fal_inpaint.inpaint", fal_call), \
+    with patch("server.fal_inpaint.edit_image", fal_call), \
          patch("server.generate_with_openrouter_semantic", server_semantic_call):
         with TestClient(server.app) as client:
             resp = client.post("/generate", json={
@@ -215,7 +215,7 @@ def test_fal_backend_falls_back_to_openrouter_on_failure(monkeypatch, tmp_path):
     fal_call = AsyncMock(side_effect=RuntimeError("fal exploded"))
     cycling_call = AsyncMock(return_value=cycling_image)
 
-    with patch("server.fal_inpaint.inpaint", fal_call), \
+    with patch("server.fal_inpaint.edit_image", fal_call), \
          patch("server.generate_with_openrouter", cycling_call):
         with TestClient(server.app) as client:
             resp = client.post("/generate", json={
@@ -245,7 +245,7 @@ def test_fal_backend_coerced_to_openrouter_when_key_missing(monkeypatch, tmp_pat
     from PIL import Image
     cycling_call = AsyncMock(return_value=Image.new("RGB", (24, 24), (10, 10, 10)))
 
-    with patch("server.fal_inpaint.inpaint", fal_call), \
+    with patch("server.fal_inpaint.edit_image", fal_call), \
          patch("server.generate_with_openrouter", cycling_call):
         with TestClient(server.app) as client:
             client.post("/generate", json={

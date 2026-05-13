@@ -90,39 +90,50 @@ def _pil_to_data_url(img: "Image.Image", fmt: str = "PNG") -> str:
     return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 
+def _build_kontext_prompt(content_prompt: str, target_sector: str) -> str:
+    """Compose a FLUX.1 Kontext instruction. Kontext has no mask — spatial
+    control comes from the prompt's natural-language sector description."""
+    # Local import to avoid an import cycle at module load.
+    from semantic import _describe_sector
+    where = _describe_sector(target_sector)
+    return (
+        f"Edit this photograph. The change to make: {content_prompt}. "
+        f"Place the change in the {where} area of the image (imagine the "
+        f"image divided into a 3x3 grid; the change belongs in the {where} "
+        "cell). Keep every other pixel of the image identical to the input. "
+        "Do not change the camera position, framing, lighting, time of day, "
+        "or any part of the scene outside the target area. Do not draw any "
+        "UI elements, borders, frames, vignettes, brackets, annotations, "
+        "markers, or text overlays."
+    )
+
+
 async def _run_fal_inpaint(
     init_image: "Image.Image",
     region: tuple[int, int, int, int],
-    prompt: str,
+    target_sector: str,
+    content_prompt: str,
 ) -> "Image.Image":
-    """Mask-based inpaint via fal.ai. Returns a result composited back onto
-    the original-resolution image so pixels outside the mask stay byte-identical."""
+    """Instruction-based edit via fal.ai FLUX.1 Kontext [pro]. Result is
+    composited back onto the original-resolution input so pixels outside the
+    target sector stay byte-identical."""
     # Resize input to bound payload + cost.
     max_edge = 1024
     work = init_image.copy()
-    ow, oh = work.size
-    if max(ow, oh) > max_edge:
+    if max(work.size) > max_edge:
         work.thumbnail((max_edge, max_edge), Image.LANCZOS)
-    sw, sh = work.size
 
-    sx1 = region[0] * sw // ow
-    sy1 = region[1] * sh // oh
-    sx2 = region[2] * sw // ow
-    sy2 = region[3] * sh // oh
-    mask = create_mask((sw, sh), (sx1, sy1, sx2, sy2))
-
-    inpainted = await fal_inpaint.inpaint(
+    edited = await fal_inpaint.edit_image(
         image_b64=_pil_to_data_url(work),
-        mask_b64=_pil_to_data_url(mask),
-        prompt=prompt,
+        prompt=_build_kontext_prompt(content_prompt, target_sector),
         api_key=FAL_KEY,
     )
 
-    # Composite the masked region of the inpainted result back onto the
-    # full-resolution input. Pixels outside the region remain pixel-identical
-    # to init_image (fal also preserves them, but doing it client-side keeps
-    # us at the input's resolution).
-    return composite_sector(init_image, inpainted, region, feather=4)
+    # Composite the target-sector region of Kontext's output back onto the
+    # full-resolution input. Kontext is designed to leave the rest of the
+    # scene alone; the client-side composite is belt-and-braces against any
+    # residual drift AND restores the original input's resolution.
+    return composite_sector(init_image, edited, region, feather=4)
 
 app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0")
 app.add_middleware(
@@ -443,10 +454,10 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
     pending_caption_args: dict | None = None
 
     if INPAINTING_BACKEND == "fal" and FAL_KEY:
-        # Mask-based path. The mask guarantees out-of-sector preservation at
-        # the protocol level, so we skip OpenRouter entirely here.
+        # Instruction-based path via FLUX.1 Kontext. Out-of-sector preservation
+        # is enforced client-side by composite_sector after the call.
         try:
-            generated_image = await _run_fal_inpaint(init_image, region, prompt)
+            generated_image = await _run_fal_inpaint(init_image, region, target, prompt)
             semantic_success = True  # treat as a successful generation for metadata
             # Schedule an async captioner so observer/feed get a description.
             edit_b64 = shrink_for_api(generated_image, max_edge=CAPTION_INPUT_MAX_EDGE)
