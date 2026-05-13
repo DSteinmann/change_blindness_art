@@ -91,33 +91,39 @@ def _pil_to_data_url(img: "Image.Image", fmt: str = "PNG") -> str:
     return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 
-def _build_kontext_prompt(content_prompt: str, target_sector: str) -> str:
-    """Compose a FLUX.1 Kontext instruction. Kontext has no mask — spatial
-    control comes from the prompt's natural-language sector description."""
+def _compose_fal_prompt(content_prompt: str, target_sector: str) -> str:
+    """Compose the prompt actually sent to the fal edit model.
+
+    `content_prompt` is either the planner's directive (which already contains
+    a natural-language location) or a generic cycling prompt (which doesn't).
+    Either way, we append an explicit sector constraint + a preservation guard
+    so the model can't drift outside the target area or hallucinate UI overlays.
+    The same string is recorded in metadata.json so post-hoc audits see exactly
+    what was sent.
+    """
     # Local import to avoid an import cycle at module load.
     from semantic import _describe_sector
     where = _describe_sector(target_sector)
     return (
-        f"Edit this photograph. The change to make: {content_prompt}. "
-        f"Place the change in the {where} area of the image (imagine the "
-        f"image divided into a 3x3 grid; the change belongs in the {where} "
-        "cell). Keep every other pixel of the image identical to the input. "
-        "Do not change the camera position, framing, lighting, time of day, "
-        "or any part of the scene outside the target area. Do not draw any "
-        "UI elements, borders, frames, vignettes, brackets, annotations, "
-        "markers, or text overlays."
+        f"{content_prompt.rstrip('.')}. The change must appear ONLY in the "
+        f"{where} area of the image (imagine the image divided into a 3x3 "
+        f"grid; the change belongs in the {where} cell). Keep every other "
+        "part of the photograph exactly as it is in the input — same camera "
+        "position, framing, lighting, time of day, palette, and all other "
+        "content unchanged. Do not draw any borders, frames, vignettes, "
+        "brackets, annotations, markers, or text overlays anywhere in the output."
     )
 
 
 async def _run_fal_inpaint(
     init_image: "Image.Image",
     region: tuple[int, int, int, int],
-    target_sector: str,
-    content_prompt: str,
+    full_prompt: str,
 ) -> "Image.Image":
-    """Instruction-based edit via fal.ai FLUX.1 Kontext [pro]. Result is
-    composited back onto the original-resolution input so pixels outside the
-    target sector stay byte-identical."""
+    """Instruction-based edit via fal.ai. `full_prompt` is the complete string
+    sent to the model (no further wrapping). Result is composited back onto
+    the original-resolution input so pixels outside the target sector stay
+    byte-identical."""
     # Resize input to bound payload + cost.
     max_edge = 1024
     work = init_image.copy()
@@ -126,7 +132,7 @@ async def _run_fal_inpaint(
 
     edited = await fal_inpaint.edit_image(
         image_b64=_pil_to_data_url(work),
-        prompt=_build_kontext_prompt(content_prompt, target_sector),
+        prompt=full_prompt,
         api_key=FAL_KEY,
     )
 
@@ -483,15 +489,19 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             api_key=OPENROUTER_API_KEY,
             salience=SEMANTIC_SALIENCE,
         )
-        edit_prompt = planned or prompt  # fall back to cycling-prompt default
+        content_prompt = planned or prompt  # fall back to cycling-prompt default
         if planned:
             print(f"planner: {planned}")
         else:
             print(f"planner failed; using cycling prompt: {prompt}")
+        # Compose the final prompt (content + spatial + preservation) once;
+        # send the same string to the model and save it to metadata so audits
+        # see the exact text the model received.
+        full_prompt = _compose_fal_prompt(content_prompt, target)
         try:
-            generated_image = await _run_fal_inpaint(init_image, region, target, edit_prompt)
+            generated_image = await _run_fal_inpaint(init_image, region, full_prompt)
             semantic_success = True  # treat as a successful generation for metadata
-            fal_planned_prompt = edit_prompt
+            fal_planned_prompt = full_prompt
             # Schedule an async captioner so observer/feed get a description.
             edit_b64 = shrink_for_api(generated_image, max_edge=CAPTION_INPUT_MAX_EDGE)
             original_b64 = _pil_to_data_url(init_image, fmt="JPEG")
