@@ -1,13 +1,8 @@
 """fal.ai instruction-based image-edit client.
 
-Uses FLUX.1 Kontext [pro] by default — fal documents it as "edits are
-precisely scoped, no subtle style drift, no background softening", which fits
-our small-naturalistic-change use case far better than the Fill endpoint
-(which is designed for outpainting / large region fills and was rendering
-vignettes, corner brackets, and stamped insets on our small masks).
-
-Kontext is instruction-only: image + prompt, no mask. Spatial control comes
-from the prompt's natural-language description of the target region.
+Uses ByteDance Seedream V5 Lite Edit by default. Instruction-only (no mask);
+fal documents it as having strong editing consistency and supports multiple
+input images per call.
 """
 from __future__ import annotations
 
@@ -19,7 +14,7 @@ import httpx
 from PIL import Image
 
 FAL_BASE_URL = os.getenv("FAL_BASE_URL", "https://fal.run")
-FAL_EDIT_MODEL = os.getenv("FAL_EDIT_MODEL", "fal-ai/flux-pro/kontext")
+FAL_EDIT_MODEL = os.getenv("FAL_EDIT_MODEL", "fal-ai/bytedance/seedream/v5/lite/edit")
 
 
 def _resolve_client(client: httpx.AsyncClient | None) -> tuple[httpx.AsyncClient, bool]:
@@ -43,12 +38,12 @@ async def edit_image(
     if not api_key:
         raise ValueError("FAL_KEY not set")
 
-    # FLUX.1 Kontext requires the payload nested under "input"; flat keys are
-    # silently accepted by the endpoint but the model never runs, which is
-    # why earlier requests showed "no prompt / no image" on the fal dashboard.
+    # fal endpoints require the payload nested under "input". Seedream's edit
+    # schema uses `image_urls` (plural list) rather than the singular
+    # `image_url` Kontext uses; sending the wrong key silently no-ops.
     payload = {
         "input": {
-            "image_url": image_b64,
+            "image_urls": [image_b64],
             "prompt": prompt,
             "sync_mode": True,
         }

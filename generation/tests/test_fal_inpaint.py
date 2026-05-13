@@ -73,8 +73,9 @@ async def test_edit_raises_on_500():
 
 
 async def test_edit_request_nests_payload_under_input_key():
-    """Kontext silently ignores flat keys and runs no model. The body MUST be
-    nested under "input" — this test guards that bug from regressing."""
+    """fal endpoints silently no-op on flat payloads. The body MUST be nested
+    under "input" AND use the model's expected field names — for Seedream
+    that's `image_urls` (plural list), not the singular `image_url`."""
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -87,11 +88,11 @@ async def test_edit_request_nests_payload_under_input_key():
     async with httpx.AsyncClient(transport=transport) as client:
         await edit_image(img, "a fern unfurls", "fake-key", client=client)
     body = captured["body"]
-    assert "input" in body, "Kontext payload must be nested under 'input'"
+    assert "input" in body, "payload must be nested under 'input'"
     inner = body["input"]
-    assert inner["image_url"] == img
+    assert inner["image_urls"] == [img]
     assert inner["prompt"] == "a fern unfurls"
     assert inner["sync_mode"] is True
-    # Kontext is instruction-only; mask_url must not be in the payload.
+    # Seedream is instruction-only; mask_url must not be in the payload.
     assert "mask_url" not in inner
     assert captured["auth"] == "Key fake-key"
