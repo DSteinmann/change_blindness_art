@@ -161,6 +161,102 @@ async def test_idle_reset_is_noop_when_recent(semantic_app):
         assert sm.current_session_id == first
 
 
+def test_fal_backend_is_used_when_enabled(monkeypatch, tmp_path):
+    """When INPAINTING_BACKEND=fal and FAL_KEY is set, /generate routes
+    through fal_inpaint instead of OpenRouter."""
+    monkeypatch.setenv("GENERATION_MODE", "semantic")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-or-key")
+    monkeypatch.setenv("INPAINTING_BACKEND", "fal")
+    monkeypatch.setenv("FAL_KEY", "fake-fal-key")
+    import importlib
+    import server
+    importlib.reload(server)
+    server.SESSIONS_DIR = tmp_path
+    server.session_manager.sessions_dir = tmp_path
+    server._notify_backend = AsyncMock(return_value=None)
+    server.caption_edit = AsyncMock(return_value=None)
+
+    from PIL import Image
+    result_image = Image.new("RGB", (24, 24), (200, 50, 50))
+    fal_call = AsyncMock(return_value=result_image)
+    server_semantic_call = AsyncMock(side_effect=AssertionError("openrouter should not be called"))
+
+    with patch("server.fal_inpaint.inpaint", fal_call), \
+         patch("server.generate_with_openrouter_semantic", server_semantic_call):
+        with TestClient(server.app) as client:
+            resp = client.post("/generate", json={
+                "image_base64": _png_b64(),
+                "focus_x": 0.5, "focus_y": 0.5,
+                "target_row": 0, "target_col": 0, "grid_size": 3,
+            })
+    assert resp.status_code == 200
+    assert fal_call.await_count == 1
+    # Ensure runtime snapshot records the active backend.
+    metadata_path = tmp_path / server.session_manager.current_session_id / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["runtime"]["inpainting_backend"] == "fal"
+
+
+def test_fal_backend_falls_back_to_openrouter_on_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("GENERATION_MODE", "cycling")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-or-key")
+    monkeypatch.setenv("INPAINTING_BACKEND", "fal")
+    monkeypatch.setenv("FAL_KEY", "fake-fal-key")
+    import importlib
+    import server
+    importlib.reload(server)
+    server.SESSIONS_DIR = tmp_path
+    server.session_manager.sessions_dir = tmp_path
+    server._notify_backend = AsyncMock(return_value=None)
+    server.caption_edit = AsyncMock(return_value=None)
+
+    from PIL import Image
+    cycling_image = Image.new("RGB", (24, 24), (10, 10, 10))
+    fal_call = AsyncMock(side_effect=RuntimeError("fal exploded"))
+    cycling_call = AsyncMock(return_value=cycling_image)
+
+    with patch("server.fal_inpaint.inpaint", fal_call), \
+         patch("server.generate_with_openrouter", cycling_call):
+        with TestClient(server.app) as client:
+            resp = client.post("/generate", json={
+                "image_base64": _png_b64(),
+                "focus_x": 0.5, "focus_y": 0.5,
+                "target_row": 0, "target_col": 0, "grid_size": 3,
+            })
+    assert resp.status_code == 200
+    assert fal_call.await_count == 1
+    assert cycling_call.await_count == 1
+
+
+def test_fal_backend_coerced_to_openrouter_when_key_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("GENERATION_MODE", "cycling")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-or-key")
+    monkeypatch.setenv("INPAINTING_BACKEND", "fal")
+    monkeypatch.delenv("FAL_KEY", raising=False)
+    import importlib
+    import server
+    importlib.reload(server)
+    server.SESSIONS_DIR = tmp_path
+    server.session_manager.sessions_dir = tmp_path
+    server._notify_backend = AsyncMock(return_value=None)
+    server.caption_edit = AsyncMock(return_value=None)
+
+    fal_call = AsyncMock(side_effect=AssertionError("fal should not be called without key"))
+    from PIL import Image
+    cycling_call = AsyncMock(return_value=Image.new("RGB", (24, 24), (10, 10, 10)))
+
+    with patch("server.fal_inpaint.inpaint", fal_call), \
+         patch("server.generate_with_openrouter", cycling_call):
+        with TestClient(server.app) as client:
+            client.post("/generate", json={
+                "image_base64": _png_b64(),
+                "focus_x": 0.5, "focus_y": 0.5,
+                "target_row": 0, "target_col": 0, "grid_size": 3,
+            })
+    assert fal_call.await_count == 0
+    assert server.INPAINTING_BACKEND == "openrouter"
+
+
 def test_duplicate_caption_is_flagged(semantic_app):
     semantic_call = AsyncMock(return_value=_message_with_caption("a monarch butterfly appeared"))
     with patch("server.generate_with_openrouter_semantic", semantic_call):

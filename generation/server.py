@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import io
 import os
 import time
@@ -11,11 +12,13 @@ from typing import Any, Optional
 
 import httpx
 import uvicorn
+from PIL import Image
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+import fal_inpaint
 from openrouter import (
     IMAGE_MODEL,
     caption_edit,
@@ -26,6 +29,7 @@ from prompts import PromptBank
 from sectors import (
     calculate_opposite_region,
     calculate_sector_region,
+    composite_sector,
     create_mask,
     decode_base64_image,
     infer_aspect_ratio,
@@ -42,6 +46,12 @@ from semantic import (
 from session_manager import ReplayManager, SessionManager
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+FAL_KEY = os.getenv("FAL_KEY", "")
+# "openrouter" (default) routes /generate to the OpenRouter image model — full
+# canvas regeneration with text-only localisation. "fal" routes to fal.ai
+# FLUX.1 Pro Fill, which takes image+mask+prompt; pixels outside the mask are
+# preserved at the protocol level (no rectangle artefacts, no scene drift).
+INPAINTING_BACKEND = os.getenv("INPAINTING_BACKEND", "openrouter").lower()
 PUPIL_SURFACE_NAME = os.getenv("PUPIL_SURFACE_NAME", "screen")
 PUPIL_CONFIDENCE_THRESHOLD = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"))
 GRID_SIZE = int(os.getenv("GRID_SIZE", "3"))
@@ -66,10 +76,53 @@ def _runtime_snapshot() -> dict[str, Any]:
         "image_model": IMAGE_MODEL,
         "mode": GENERATION_MODE,
         "salience": SEMANTIC_SALIENCE,
+        "inpainting_backend": INPAINTING_BACKEND,
         "pupil_surface_name": PUPIL_SURFACE_NAME,
         "pupil_confidence_threshold": PUPIL_CONFIDENCE_THRESHOLD,
         "grid_size": GRID_SIZE,
     }
+
+
+def _pil_to_data_url(img: "Image.Image", fmt: str = "PNG") -> str:
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    mime = "image/png" if fmt == "PNG" else "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+
+async def _run_fal_inpaint(
+    init_image: "Image.Image",
+    region: tuple[int, int, int, int],
+    prompt: str,
+) -> "Image.Image":
+    """Mask-based inpaint via fal.ai. Returns a result composited back onto
+    the original-resolution image so pixels outside the mask stay byte-identical."""
+    # Resize input to bound payload + cost.
+    max_edge = 1024
+    work = init_image.copy()
+    ow, oh = work.size
+    if max(ow, oh) > max_edge:
+        work.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    sw, sh = work.size
+
+    sx1 = region[0] * sw // ow
+    sy1 = region[1] * sh // oh
+    sx2 = region[2] * sw // ow
+    sy2 = region[3] * sh // oh
+    mask = create_mask((sw, sh), (sx1, sy1, sx2, sy2))
+
+    inpainted = await fal_inpaint.inpaint(
+        image_b64=_pil_to_data_url(work),
+        mask_b64=_pil_to_data_url(mask),
+        prompt=prompt,
+        api_key=FAL_KEY,
+    )
+
+    # Composite the masked region of the inpainted result back onto the
+    # full-resolution input. Pixels outside the region remain pixel-identical
+    # to init_image (fal also preserves them, but doing it client-side keeps
+    # us at the input's resolution).
+    return composite_sector(init_image, inpainted, region, feather=4)
 
 app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0")
 app.add_middleware(
@@ -121,16 +174,21 @@ class GenerateRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    global _backend_client, GENERATION_MODE, _idle_task, _idle_lock
+    global _backend_client, GENERATION_MODE, INPAINTING_BACKEND, _idle_task, _idle_lock
     _backend_client = httpx.AsyncClient()
     _idle_lock = asyncio.Lock()
     prompt_bank.load()
     print(f"OpenRouter API Key: {'✓ Set' if OPENROUTER_API_KEY else '✗ Not set'}")
+    print(f"FAL API Key: {'✓ Set' if FAL_KEY else '✗ Not set'}")
     print(f"Image model: {IMAGE_MODEL}")
+    if INPAINTING_BACKEND == "fal" and not FAL_KEY:
+        print("INPAINTING_BACKEND=fal but FAL_KEY missing; coercing to openrouter")
+        INPAINTING_BACKEND = "openrouter"
     if GENERATION_MODE == "semantic" and not OPENROUTER_API_KEY:
         print("GENERATION_MODE=semantic but OPENROUTER_API_KEY missing; coercing to cycling")
         GENERATION_MODE = "cycling"
     print(f"Generation mode: {GENERATION_MODE}")
+    print(f"Inpainting backend: {INPAINTING_BACKEND}")
     session_id = session_manager.start_new_session(runtime=_runtime_snapshot())
     print(f"Auto-started recording session: {session_id}")
     _idle_task = asyncio.create_task(_idle_watcher())
@@ -384,7 +442,27 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
     generated_image = init_image
     pending_caption_args: dict | None = None
 
-    if GENERATION_MODE == "semantic" and OPENROUTER_API_KEY:
+    if INPAINTING_BACKEND == "fal" and FAL_KEY:
+        # Mask-based path. The mask guarantees out-of-sector preservation at
+        # the protocol level, so we skip OpenRouter entirely here.
+        try:
+            generated_image = await _run_fal_inpaint(init_image, region, prompt)
+            semantic_success = True  # treat as a successful generation for metadata
+            # Schedule an async captioner so observer/feed get a description.
+            edit_b64 = shrink_for_api(generated_image, max_edge=CAPTION_INPUT_MAX_EDGE)
+            original_b64 = _pil_to_data_url(init_image, fmt="JPEG")
+            pending_caption_args = {
+                "session_id": session_manager.current_session_id or "anon",
+                "turn_index": -1,
+                "original_b64": original_b64,
+                "edit_b64": edit_b64,
+                "target": target,
+                "prior_captions_lower": [],
+            }
+        except Exception as fal_err:
+            print(f"fal inpaint failed: {fal_err} - falling back to original image")
+            generated_image = init_image
+    elif GENERATION_MODE == "semantic" and OPENROUTER_API_KEY:
         session_id = session_manager.current_session_id or "anon"
         # Bound payload size: OpenRouter rejects images >30MB and the multi-turn
         # message array carries the original + up to HISTORY_WINDOW prior edits.
