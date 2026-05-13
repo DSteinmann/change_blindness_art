@@ -175,6 +175,7 @@ def test_fal_backend_is_used_when_enabled(monkeypatch, tmp_path):
     server.session_manager.sessions_dir = tmp_path
     server._notify_backend = AsyncMock(return_value=None)
     server.caption_edit = AsyncMock(return_value=None)
+    server.plan_edit = AsyncMock(return_value=None)
 
     from PIL import Image
     result_image = Image.new("RGB", (24, 24), (200, 50, 50))
@@ -209,6 +210,7 @@ def test_fal_backend_falls_back_to_openrouter_on_failure(monkeypatch, tmp_path):
     server.session_manager.sessions_dir = tmp_path
     server._notify_backend = AsyncMock(return_value=None)
     server.caption_edit = AsyncMock(return_value=None)
+    server.plan_edit = AsyncMock(return_value=None)
 
     from PIL import Image
     cycling_image = Image.new("RGB", (24, 24), (10, 10, 10))

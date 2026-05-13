@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from openrouter import caption_edit, generate_with_openrouter_semantic
+from openrouter import caption_edit, generate_with_openrouter_semantic, plan_edit
 from semantic import build_messages, parse_response
 
 
@@ -155,3 +155,62 @@ def test_extract_image_picks_largest_irrespective_of_order():
         ],
     }
     assert _extract_image(message).size == (400, 200)
+
+
+async def test_plan_edit_returns_proposed_instruction(tiny_png_b64):
+    body = {"choices": [{"message": {"content": "add a small commercial airplane high in the sky"}}]}
+    transport = _mock_transport(200, body)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await plan_edit(
+            image_b64=tiny_png_b64,
+            sector_name="upper-right",
+            prior_edits=[],
+            api_key="fake-key",
+            client=client,
+        )
+    assert result == "add a small commercial airplane high in the sky"
+
+
+async def test_plan_edit_returns_none_without_api_key(tiny_png_b64):
+    result = await plan_edit(
+        image_b64=tiny_png_b64, sector_name="TL", prior_edits=[], api_key="",
+    )
+    assert result is None
+
+
+async def test_plan_edit_returns_none_on_error(tiny_png_b64):
+    transport = _mock_transport(500, {"error": "boom"})
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await plan_edit(
+            image_b64=tiny_png_b64, sector_name="TL", prior_edits=[],
+            api_key="fake-key", client=client,
+        )
+    assert result is None
+
+
+async def test_plan_edit_payload_includes_image_sector_and_history(tiny_png_b64):
+    captured = {}
+
+    def handler(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "do something"}}]
+        })
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        await plan_edit(
+            image_b64=tiny_png_b64,
+            sector_name="upper-left",
+            prior_edits=["added a bird", "added a kite"],
+            api_key="fake-key",
+            client=client,
+        )
+    content = captured["body"]["messages"][0]["content"]
+    image_parts = [p for p in content if p["type"] == "image_url"]
+    text_parts = [p for p in content if p["type"] == "text"]
+    assert len(image_parts) == 1
+    text = text_parts[0]["text"]
+    assert "upper-left" in text
+    assert "added a bird" in text
+    assert "added a kite" in text

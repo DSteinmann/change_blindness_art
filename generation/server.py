@@ -24,6 +24,7 @@ from openrouter import (
     caption_edit,
     generate_with_openrouter,
     generate_with_openrouter_semantic,
+    plan_edit,
 )
 from prompts import PromptBank
 from sectors import (
@@ -458,15 +459,35 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
     caption: str | None = None
     duplicate_caption = False
     semantic_success = False
+    fal_planned_prompt: str | None = None
     generated_image = init_image
     pending_caption_args: dict | None = None
 
     if INPAINTING_BACKEND == "fal" and FAL_KEY:
-        # Instruction-based path via FLUX.1 Kontext. Out-of-sector preservation
-        # is enforced client-side by composite_sector after the call.
+        # Two-step path: a VLM (gemini-2.5-flash) looks at the actual image
+        # and proposes a scene-appropriate edit prompt; that prompt is then
+        # passed to the fal edit model. Without this, the prompt comes from
+        # sector_prompts.json regardless of scene (e.g. "add a ladybug"
+        # against a city skyline).
+        sid_for_history = session_manager.current_session_id or "anon"
+        prior_for_planner = semantic_history.captions(sid_for_history)
+        planner_image = shrink_for_api(init_image, max_edge=CAPTION_INPUT_MAX_EDGE)
+        planned = await plan_edit(
+            image_b64=planner_image,
+            sector_name=target,
+            prior_edits=prior_for_planner,
+            api_key=OPENROUTER_API_KEY,
+            salience=SEMANTIC_SALIENCE,
+        )
+        edit_prompt = planned or prompt  # fall back to cycling-prompt default
+        if planned:
+            print(f"planner: {planned}")
+        else:
+            print(f"planner failed; using cycling prompt: {prompt}")
         try:
-            generated_image = await _run_fal_inpaint(init_image, region, target, prompt)
+            generated_image = await _run_fal_inpaint(init_image, region, target, edit_prompt)
             semantic_success = True  # treat as a successful generation for metadata
+            fal_planned_prompt = edit_prompt
             # Schedule an async captioner so observer/feed get a description.
             edit_b64 = shrink_for_api(generated_image, max_edge=CAPTION_INPUT_MAX_EDGE)
             original_b64 = _pil_to_data_url(init_image, fmt="JPEG")
@@ -572,7 +593,12 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
     entry: dict = {}
     # In semantic mode the model decided autonomously; the curated prompt
     # string was never seen by it. Record that honestly in metadata.
-    recorded_prompt = "semantic auto-edit" if semantic_success else prompt
+    if fal_planned_prompt is not None:
+        recorded_prompt = fal_planned_prompt
+    elif semantic_success:
+        recorded_prompt = "semantic auto-edit"
+    else:
+        recorded_prompt = prompt
     if session_manager.current_session_id:
         entry = session_manager.save_generation(
             generated_image, target, recorded_prompt, focus_sector,

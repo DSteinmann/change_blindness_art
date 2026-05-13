@@ -14,6 +14,10 @@ IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "google/gemini-3-pro-image-pre
 # routinely drops the text portion of `modalities: ["image", "text"]`, so we
 # round-trip a cheaper text-capable model instead.
 CAPTION_MODEL = os.getenv("OPENROUTER_CAPTION_MODEL", "google/gemini-2.5-flash")
+# Vision-language model used to propose a scene-appropriate edit instruction
+# before handing the image off to the inpainting/edit model. Same default as
+# the captioner — gemini-2.5-flash is cheap, fast, and good at scene reasoning.
+PLANNER_MODEL = os.getenv("OPENROUTER_PLANNER_MODEL", "google/gemini-2.5-flash")
 # OpenRouter's image_config.image_size knob: "0.5K" | "1K" | "2K" (default) | "4K".
 # 0.5K is fast-mode (gemini-3.1-flash-image-preview only); 2K trades latency
 # and bandwidth for noticeably more detail in the model's full-frame regen.
@@ -178,6 +182,96 @@ async def caption_edit(
         message = await _post_chat(payload, api_key, owned)
     except Exception as exc:
         print(f"caption_edit failed: {exc}")
+        return None
+    finally:
+        if created:
+            await owned.aclose()
+    content = message.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text = (part.get("text") or "").strip()
+                if text:
+                    return text
+        return None
+    if isinstance(content, str):
+        return content.strip() or None
+    return None
+
+
+async def plan_edit(
+    image_b64: str,
+    sector_name: str,
+    prior_edits: list[str],
+    api_key: str,
+    *,
+    salience: str = "subtle",
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Ask a vision-language model to propose a scene-appropriate edit
+    instruction for the target sector. Returns a single-sentence prompt or
+    None on failure. The caller is expected to fall back to a curated default
+    when None is returned.
+
+    This step gives the downstream edit model a prompt that actually fits the
+    image — without it, fixed prompts from sector_prompts.json produce things
+    like "a ladybug in a city skyline".
+    """
+    if not api_key:
+        return None
+    salience_hint = {
+        "subtle": (
+            "Pick a SMALL, plausible, naturalistic element — the kind of "
+            "detail a viewer could miss in peripheral vision."
+        ),
+        "moderate": (
+            "Pick a small-to-medium element that still feels native to the scene."
+        ),
+        "bold": (
+            "Pick a dramatic or atmospheric element that still fits the scene's mood."
+        ),
+    }.get(salience, "")
+    history_block = ""
+    if prior_edits:
+        bullets = "\n".join(f"  - {e}" for e in prior_edits)
+        history_block = (
+            f"\n\nPrior edits already applied in this session (DO NOT repeat "
+            f"any of these object classes or motifs):\n{bullets}"
+        )
+    instruction = (
+        "Look at this image. Identify the scene type (e.g. urban skyline at "
+        "night, rural landscape, indoor still life, portrait), its visual "
+        "style (photograph, painting, illustration), and the existing palette "
+        "and lighting.\n\n"
+        f"Propose ONE edit to apply in the {sector_name} area of the image "
+        f"(imagine the image divided into a 3x3 grid; you are picking "
+        f"something for the {sector_name} cell). The edit MUST:\n"
+        "  - Be an object, creature, or phenomenon that would plausibly "
+        "appear in THIS kind of scene (no jellyfish in a city; no skyscrapers "
+        "in a forest; no fantastical creatures in a real photograph).\n"
+        "  - Match the existing visual style, palette, and lighting.\n"
+        f"  - {salience_hint}"
+        f"{history_block}\n\n"
+        "Respond with ONLY the edit instruction as a single short sentence, "
+        "phrased as a directive (e.g. 'add a small commercial airplane high "
+        "in the night sky' or 'place a worn paperback on the table edge'). "
+        "Do not preface, explain, or include any other text."
+    )
+    payload = {
+        "model": PLANNER_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": image_b64}},
+                {"type": "text", "text": instruction},
+            ],
+        }],
+    }
+    owned, created = _resolve_client(client)
+    try:
+        message = await _post_chat(payload, api_key, owned)
+    except Exception as exc:
+        print(f"plan_edit failed: {exc}")
         return None
     finally:
         if created:
