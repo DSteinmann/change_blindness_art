@@ -47,6 +47,10 @@ PUPIL_CONFIDENCE_THRESHOLD = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"
 GRID_SIZE = int(os.getenv("GRID_SIZE", "3"))
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 GENERATION_MODE = os.getenv("GENERATION_MODE", "cycling").lower()
+# "subtle" (default) | "moderate" | "bold" — controls how prominent each
+# semantic-mode edit is. Subtle is the right default for change-blindness
+# research; bold is for art installations that want striking visuals.
+SEMANTIC_SALIENCE = os.getenv("SEMANTIC_SALIENCE", "subtle").lower()
 IDLE_THRESHOLD_SEC = int(os.getenv("IDLE_RESET_SEC", "180"))
 IDLE_TICK_SEC = 30
 # The captioner doesn't need detail to describe a change; smaller inputs cut
@@ -61,6 +65,7 @@ def _runtime_snapshot() -> dict[str, Any]:
     return {
         "image_model": IMAGE_MODEL,
         "mode": GENERATION_MODE,
+        "salience": SEMANTIC_SALIENCE,
         "pupil_surface_name": PUPIL_SURFACE_NAME,
         "pupil_confidence_threshold": PUPIL_CONFIDENCE_THRESHOLD,
         "grid_size": GRID_SIZE,
@@ -391,6 +396,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             turns=prior_turns,
             target_sector=target,
             region=region,
+            salience=SEMANTIC_SALIENCE,
         )
         try:
             message = await generate_with_openrouter_semantic(

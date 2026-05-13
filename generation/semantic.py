@@ -21,6 +21,30 @@ from openrouter import _extract_image
 HISTORY_WINDOW = 2
 CAPTION_PREFIX = "CAPTION:"
 
+SALIENCE_PROMPTS = {
+    "subtle": (
+        "Make the change SMALL AND PLAUSIBLE — a minor naturalistic detail "
+        "that fits the scene as if it had always been there. Think a single "
+        "small object, a subtle weather or lighting effect, a delicate "
+        "transformation. The change must NOT dominate the sector; it should "
+        "be the kind of detail a viewer could plausibly miss in peripheral "
+        "vision. Avoid prominent, fantastical, or surreal elements; avoid "
+        "anything large or brightly luminous that contrasts strongly with "
+        "its surroundings."
+    ),
+    "moderate": (
+        "Make the change NOTICEABLE BUT BELIEVABLE — a small-to-medium "
+        "object, atmospheric shift, or transformation that still feels native "
+        "to the scene. Avoid anything that would dominate the full image or "
+        "feel fantastical."
+    ),
+    "bold": (
+        "The change can be DRAMATIC, ATMOSPHERIC, OR SURREAL — surprise the "
+        "viewer with something striking or otherworldly. The result should "
+        "still feel intentional within the scene's overall mood."
+    ),
+}
+
 
 @dataclass
 class SemanticTurn:
@@ -78,6 +102,7 @@ def build_messages(
     turns: list[SemanticTurn],
     target_sector: str,
     region: tuple[int, int, int, int],
+    salience: str = "subtle",
 ) -> list[dict]:
     """Build a chat-completions `messages` array.
 
@@ -112,18 +137,17 @@ def build_messages(
         anchor = "Produce a new image based on IMAGE 0."
 
     x1, y1, x2, y2 = region
+    salience_clause = SALIENCE_PROMPTS.get(salience, SALIENCE_PROMPTS["subtle"])
     instruction = (
         "\n".join(label_lines)
         + "\n\n"
         + anchor
-        + f" Make ONE deliberate artistic change in the {target_sector} sector "
-        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). You have full "
-        "creative freedom: you may add a new element, transform or replace "
-        "something that is already there, or remove something to reveal what "
-        "lies behind it. Surprise the viewer — bold, surreal, atmospheric, or "
-        "subtle interventions are all welcome, as long as the result fits the "
-        "scene's mood. Keep every prior change visible and the rest of the "
-        "image unchanged."
+        + f" Make ONE deliberate change in the {target_sector} sector "
+        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). You may add a "
+        "new element, transform or replace something already there, or remove "
+        "something to reveal what lies behind it.\n\n"
+        f"{salience_clause}\n\n"
+        "Keep every prior change visible and the rest of the image unchanged."
     )
     content.append({"type": "text", "text": instruction})
 

@@ -124,6 +124,35 @@ def test_build_messages_caps_replay_to_history_window(tiny_png_b64):
     assert "edit 5" not in text
 
 
+def test_build_messages_uses_subtle_salience_by_default(tiny_png_b64):
+    messages = build_messages(
+        original_b64=tiny_png_b64, turns=[],
+        target_sector="TL", region=(0, 0, 10, 10),
+    )
+    text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+    assert "SMALL AND PLAUSIBLE" in text
+    assert "peripheral vision" in text
+
+
+def test_build_messages_switches_salience_clause(tiny_png_b64):
+    bold = build_messages(
+        original_b64=tiny_png_b64, turns=[],
+        target_sector="TL", region=(0, 0, 10, 10),
+        salience="bold",
+    )
+    text = next(p["text"] for p in bold[0]["content"] if p["type"] == "text")
+    assert "DRAMATIC" in text
+    assert "SMALL AND PLAUSIBLE" not in text
+
+    moderate = build_messages(
+        original_b64=tiny_png_b64, turns=[],
+        target_sector="TL", region=(0, 0, 10, 10),
+        salience="moderate",
+    )
+    text2 = next(p["text"] for p in moderate[0]["content"] if p["type"] == "text")
+    assert "NOTICEABLE BUT BELIEVABLE" in text2
+
+
 def test_build_messages_omits_caption_label_when_missing(tiny_png_b64):
     turns = [SemanticTurn("TR", tiny_png_b64, caption=None)]
     messages = build_messages(
