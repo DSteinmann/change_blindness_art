@@ -13,8 +13,13 @@ export class GenerationController {
     this.lastBlinkState = "open";
     this.lastBlinkOnsetTs = 0;
     this.BLINK_GRACE_MS = 250;
+    this.currentSessionId = null;
 
     fixationTracker.addEventListener("fixation", (e) => this.#onFixation(e.detail.sector));
+  }
+
+  setSessionId(sessionId) {
+    this.currentSessionId = sessionId || null;
   }
 
   setBaseImage(image, base64) {
@@ -74,8 +79,14 @@ export class GenerationController {
         target_row: targetSector.row,
         target_col: targetSector.col,
         grid_size: this.config.grid_size,
+        session_id: this.currentSessionId,
       }),
     });
+    if (response.status === 410) {
+      console.warn("Session no longer active; clearing local state.");
+      this.resetForNewSession();
+      return;
+    }
     if (!response.ok) throw new Error(await response.text());
 
     const promptUsed = response.headers.get("X-Prompt-Used");

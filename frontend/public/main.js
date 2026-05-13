@@ -66,12 +66,25 @@ async function main() {
   connectWebSocket(
     (g) => gaze.ingest(g),
     (state) => controller.handleBlink(state),
-    async () => {
-      console.log("session_started → reloading default base image");
+    async (data) => {
+      console.log("session_started → reloading default base image", data?.session_id);
+      controller.setSessionId(data?.session_id);
       controller.resetForNewSession();
       await loadDefaultBaseImage(controller);
     },
   );
+  // Fetch the active session id once on load so the first /generate request
+  // already carries a session_id and stale-tab writes can be rejected from
+  // the very first call.
+  try {
+    const r = await fetch(`${config.generation_api}/session/current`);
+    if (r.ok) {
+      const j = await r.json();
+      controller.setSessionId(j.session_id);
+    }
+  } catch (err) {
+    console.warn("Could not fetch current session id:", err);
+  }
   await loadDefaultBaseImage(controller);
 
   document.addEventListener("keydown", (event) => {

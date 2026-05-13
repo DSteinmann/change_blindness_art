@@ -188,6 +188,10 @@ class GenerateRequest(BaseModel):
     grid_size: int = 3
     strength: float = 0.75
     peripheral_size: float = 0.3
+    # Optional: the session_id the client thinks is active. If supplied and
+    # the gen service has rotated since, we reject with 410 to prevent stale
+    # tabs from corrupting the active session's metadata folder.
+    session_id: Optional[str] = None
 
 
 @app.on_event("startup")
@@ -342,6 +346,13 @@ async def list_sessions() -> dict:
     return {"sessions": session_manager.list_sessions()}
 
 
+@app.get("/session/current")
+async def current_session() -> dict:
+    """Return the currently active session id so the frontend can stamp its
+    /generate requests and detect rotation."""
+    return {"session_id": session_manager.current_session_id}
+
+
 @app.get("/session/{session_id}")
 async def get_session(session_id: str) -> dict:
     try:
@@ -426,6 +437,18 @@ async def _caption_after_response(
 
 async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) -> Response:
     t_start = time.perf_counter()
+    # Reject stale-tab writes: if the client thinks it's in a session that the
+    # gen service has already rotated past, drop the request rather than write
+    # its output into the wrong session's folder.
+    if request.session_id and request.session_id != session_manager.current_session_id:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                f"Session {request.session_id!r} is no longer active; "
+                f"current session is {session_manager.current_session_id!r}. "
+                "Stale tab — reload to resync."
+            ),
+        )
     try:
         init_image = decode_base64_image(request.image_base64)
     except Exception as e:

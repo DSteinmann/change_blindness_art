@@ -271,3 +271,54 @@ def test_duplicate_caption_is_flagged(semantic_app):
     )
     assert metadata["sequence"][0].get("duplicate_caption") is not True
     assert metadata["sequence"][1].get("duplicate_caption") is True
+
+
+def test_generate_rejects_stale_session_id_with_410(semantic_app):
+    """A /generate request from a tab that thinks it's in an old session must
+    be rejected so its output doesn't pollute the active session's folder."""
+    semantic_call = AsyncMock(return_value=_message_with_caption("never reached"))
+    with patch("server.generate_with_openrouter_semantic", semantic_call):
+        with TestClient(semantic_app.app) as client:
+            resp = client.post("/generate", json={
+                "image_base64": _png_b64(),
+                "focus_x": 0.5, "focus_y": 0.5,
+                "target_row": 0, "target_col": 0, "grid_size": 3,
+                "session_id": "some_stale_session_that_doesnt_match",
+            })
+    assert resp.status_code == 410
+    assert semantic_call.await_count == 0  # model is not called for stale tabs
+
+
+def test_generate_accepts_matching_session_id(semantic_app):
+    semantic_call = AsyncMock(return_value=_message_with_caption("ok"))
+    with patch("server.generate_with_openrouter_semantic", semantic_call):
+        with TestClient(semantic_app.app) as client:
+            current_sid = semantic_app.session_manager.current_session_id
+            resp = client.post("/generate", json={
+                "image_base64": _png_b64(),
+                "focus_x": 0.5, "focus_y": 0.5,
+                "target_row": 0, "target_col": 0, "grid_size": 3,
+                "session_id": current_sid,
+            })
+    assert resp.status_code == 200
+
+
+def test_generate_without_session_id_still_accepted(semantic_app):
+    """Back-compat: older clients that don't know about session_id still work."""
+    semantic_call = AsyncMock(return_value=_message_with_caption("ok"))
+    with patch("server.generate_with_openrouter_semantic", semantic_call):
+        with TestClient(semantic_app.app) as client:
+            resp = client.post("/generate", json={
+                "image_base64": _png_b64(),
+                "focus_x": 0.5, "focus_y": 0.5,
+                "target_row": 0, "target_col": 0, "grid_size": 3,
+            })
+    assert resp.status_code == 200
+
+
+def test_session_current_returns_active_session_id(semantic_app):
+    with TestClient(semantic_app.app) as client:
+        resp = client.get("/session/current")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["session_id"] == semantic_app.session_manager.current_session_id
