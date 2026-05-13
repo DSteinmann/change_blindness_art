@@ -384,6 +384,14 @@ async def replay_next() -> Response:
 async def generate(request: GenerateRequest, background: BackgroundTasks) -> Response:
     if _idle_lock is None:
         return await _generate_impl(request, background)
+    # Reject concurrent /generate calls outright rather than queueing them on
+    # the idle lock. With multi-second model latencies, queued requests would
+    # all run sequentially against the same sector after the gaze had moved
+    # on, producing stale generations.
+    if _idle_lock.locked():
+        raise HTTPException(
+            status_code=409, detail="Generation already in flight; ignoring duplicate."
+        )
     async with _idle_lock:
         return await _generate_impl(request, background)
 

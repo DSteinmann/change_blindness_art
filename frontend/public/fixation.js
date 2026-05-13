@@ -24,7 +24,12 @@ export class FixationTracker extends EventTarget {
   }
 
   reset() {
-    this.fixatedSector = null;
+    // Mark the current sector as already-consumed so a parked gaze cannot
+    // re-fire fixation events on the same sector after a swap. New fixations
+    // require the user to leave this sector and return to it (or land on
+    // another), at which point `sectorchange` clears `fixatedSector` again.
+    this.fixatedSector = this.current;
+    this.fixationStart = null;
   }
 
   get lastFixated() {
