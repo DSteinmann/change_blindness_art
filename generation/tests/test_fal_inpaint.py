@@ -72,10 +72,9 @@ async def test_edit_raises_on_500():
             await edit_image(_png_data_url(), "x", "fake-key", client=client)
 
 
-async def test_edit_request_nests_payload_under_input_key():
-    """fal endpoints silently no-op on flat payloads. The body MUST be nested
-    under "input" AND use the model's expected field names — for Seedream
-    that's `image_urls` (plural list), not the singular `image_url`."""
+async def test_edit_request_uses_flat_payload():
+    """The direct fal.run sync endpoint expects flat keys. Wrapping the body
+    under "input" (a JS-SDK convention) produces 422."""
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -88,11 +87,10 @@ async def test_edit_request_nests_payload_under_input_key():
     async with httpx.AsyncClient(transport=transport) as client:
         await edit_image(img, "a fern unfurls", "fake-key", client=client)
     body = captured["body"]
-    assert "input" in body, "payload must be nested under 'input'"
-    inner = body["input"]
-    assert inner["image_urls"] == [img]
-    assert inner["prompt"] == "a fern unfurls"
-    assert inner["sync_mode"] is True
+    assert "input" not in body, "payload must NOT be nested under 'input'"
+    assert body["image_urls"] == [img]
+    assert body["prompt"] == "a fern unfurls"
+    assert body["sync_mode"] is True
     # Seedream is instruction-only; mask_url must not be in the payload.
-    assert "mask_url" not in inner
+    assert "mask_url" not in body
     assert captured["auth"] == "Key fake-key"

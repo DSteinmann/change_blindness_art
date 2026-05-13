@@ -38,15 +38,13 @@ async def edit_image(
     if not api_key:
         raise ValueError("FAL_KEY not set")
 
-    # fal endpoints require the payload nested under "input". Seedream's edit
-    # schema uses `image_urls` (plural list) rather than the singular
-    # `image_url` Kontext uses; sending the wrong key silently no-ops.
+    # Direct HTTP POSTs to fal.run use FLAT keys; the "input" wrapper is a
+    # JS-SDK-only convention. Wrapping the body silently produces 422.
+    # Seedream's edit schema uses `image_urls` (plural list).
     payload = {
-        "input": {
-            "image_urls": [image_b64],
-            "prompt": prompt,
-            "sync_mode": True,
-        }
+        "image_urls": [image_b64],
+        "prompt": prompt,
+        "sync_mode": True,
     }
 
     owned, created = _resolve_client(client)
