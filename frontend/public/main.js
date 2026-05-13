@@ -4,7 +4,7 @@ import { GazeStream } from "./gaze.js";
 import { FixationTracker } from "./fixation.js";
 import { GenerationController } from "./generation.js";
 
-const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/pexels-triemli-28578413.jpg`;
+const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/pexels-peng-liu-45946-169647.png`;
 
 async function loadDefaultBaseImage(controller) {
   try {
@@ -26,7 +26,7 @@ async function loadDefaultBaseImage(controller) {
   }
 }
 
-function connectWebSocket(onSample, onBlink) {
+function connectWebSocket(onSample, onBlink, onSessionStarted) {
   const socket = new WebSocket(WS_URL);
   let pingInterval = null;
   socket.addEventListener("open", () => {
@@ -37,11 +37,12 @@ function connectWebSocket(onSample, onBlink) {
     const data = JSON.parse(event.data);
     if (data.event === "sample" && data.gaze) onSample(data.gaze);
     else if (data.event === "blink" && data.state) onBlink(data.state);
+    else if (data.event === "session_started" && onSessionStarted) onSessionStarted(data);
   });
   socket.addEventListener("close", () => {
     if (pingInterval !== null) clearInterval(pingInterval);
     console.log("WebSocket disconnected, reconnecting...");
-    setTimeout(() => connectWebSocket(onSample, onBlink), 1000);
+    setTimeout(() => connectWebSocket(onSample, onBlink, onSessionStarted), 1000);
   });
   socket.addEventListener("error", () => socket.close());
 }
@@ -65,6 +66,11 @@ async function main() {
   connectWebSocket(
     (g) => gaze.ingest(g),
     (state) => controller.handleBlink(state),
+    async () => {
+      console.log("session_started → reloading default base image");
+      controller.resetForNewSession();
+      await loadDefaultBaseImage(controller);
+    },
   );
   await loadDefaultBaseImage(controller);
 

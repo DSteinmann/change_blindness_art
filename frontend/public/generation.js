@@ -22,6 +22,15 @@ export class GenerationController {
     setActivePatch({ image });
   }
 
+  resetForNewSession() {
+    // Drop the cumulative state so the next participant starts on the
+    // default base image, not the prior session's last drift.
+    this.capturedImageBase64 = null;
+    this.pendingSwap = null;
+    this.isGenerating = false;
+    this.fixation.reset();
+  }
+
   handleBlink(state) {
     const onset = this.lastBlinkState !== "closed" && state === "closed";
     if (onset) {
