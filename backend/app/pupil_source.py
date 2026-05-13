@@ -16,6 +16,42 @@ from .config import Settings
 logger = logging.getLogger(__name__)
 
 
+def _is_binocular(gaze_pt: dict) -> bool:
+    """A gaze_on_surfaces entry is binocular when its underlying source fused
+    both eyes. Pupil exposes this via either:
+      - `base_data`: list of 2 pupil entries (one per eye) for binocular,
+      - `topic`: ends in ".01." (e.g. "gaze.3d.01.") for binocular.
+    """
+    base = gaze_pt.get("base_data")
+    if isinstance(base, list) and len(base) >= 2:
+        return True
+    topic = str(gaze_pt.get("topic", ""))
+    return ".01" in topic
+
+
+def filter_to_one_source(gaze_pts: list[dict]) -> list[dict]:
+    """Pupil publishes binocular + both monocular gazes for the same timestamp.
+    Forwarding all of them yanks the smoothed gaze cursor between disagreeing
+    sources. Prefer binocular; fall back to the highest-confidence monocular
+    per unique timestamp when binocular is unavailable.
+    """
+    if not gaze_pts:
+        return []
+    binocular = [g for g in gaze_pts if _is_binocular(g)]
+    if binocular:
+        return binocular
+    # No binocular available — dedupe monocular by timestamp.
+    by_ts: dict = {}
+    for g in gaze_pts:
+        ts = g.get("timestamp")
+        if ts is None:
+            continue
+        prior = by_ts.get(ts)
+        if prior is None or g.get("confidence", 0.0) > prior.get("confidence", 0.0):
+            by_ts[ts] = g
+    return list(by_ts.values())
+
+
 class PupilSource:
     """
     Connects to Pupil Core and subscribes to:
@@ -141,12 +177,15 @@ class PupilSource:
                         # - gaze_on_surfaces: list of [{norm_pos: [x,y], confidence: float, ...}]
                         gaze_on_surfaces = surface_obj.get("gaze_on_surfaces") or []
                         fixations_on_surfaces = surface_obj.get("fixations_on_surfaces") or []
-                        # Diagnostic: log list sizes for the first 20 messages and
-                        # periodically thereafter so we can tell when Pupil stops
-                        # mapping gaze to the surface.
+                        # Pupil publishes binocular + per-eye monocular gaze at
+                        # the same timestamps; forwarding all of them disagrees
+                        # the smoothed cursor between sources. Keep one source.
+                        raw_count = len(gaze_on_surfaces)
+                        gaze_on_surfaces = filter_to_one_source(gaze_on_surfaces)
                         if surface_samples < 20 or surface_samples % 60 == 0:
+                            kept = len(gaze_on_surfaces)
                             logger.info(
-                                f"surface='{surface_name}' gaze_pts={len(gaze_on_surfaces)} "
+                                f"surface='{surface_name}' gaze_pts={kept}/{raw_count} "
                                 f"fix_pts={len(fixations_on_surfaces)}"
                             )
                         for gaze_pt in gaze_on_surfaces:
