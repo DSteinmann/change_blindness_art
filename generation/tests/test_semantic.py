@@ -82,10 +82,7 @@ def test_build_messages_returns_single_user_turn_with_original_only(tiny_png_b64
     assert image_parts[0]["image_url"]["url"] == tiny_png_b64
     text = text_parts[0]["text"]
     assert "IMAGE 0" in text
-    assert "TL" in text
-    # Pixel coordinates are deliberately NOT in the prompt — they make the model
-    # render bounding-box rectangles into the output. Sector name + natural
-    # language only.
+    # Sector specified via natural language; pixel coords deliberately omitted.
     assert "upper-left" in text
     assert "x1=" not in text
     assert "pixel rectangle" not in text
@@ -111,7 +108,7 @@ def test_build_messages_includes_prior_edit_images_in_user_turn(tiny_png_b64):
     assert "IMAGE 1" in text and "TR" in text and "a butterfly drifted in" in text
     assert "IMAGE 2" in text and "BL" in text and "a paper boat sailed" in text
     assert "Take IMAGE 2" in text
-    assert "pixel-for-pixel identical to IMAGE 2" in text
+    assert "SAME PHOTOGRAPH OR SCENE as IMAGE 2" in text
 
 
 def test_build_messages_caps_replay_to_history_window(tiny_png_b64):
