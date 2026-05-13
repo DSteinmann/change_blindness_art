@@ -107,3 +107,48 @@ async def test_caption_edit_handles_list_content(tiny_png_b64):
             tiny_png_b64, tiny_png_b64, "MC", "fake-key", client=client,
         )
     assert result == "a butterfly drifted in"
+
+
+def test_extract_image_picks_largest_when_multiple_returned():
+    """gemini-3-pro-image-preview sometimes returns preview + full-res; pick the largest."""
+    import base64, io
+    from openrouter import _extract_image
+    from PIL import Image
+
+    def _data_url(size, colour):
+        img = Image.new("RGB", size, colour)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    small = _data_url((128, 64), (1, 2, 3))
+    large = _data_url((512, 256), (4, 5, 6))
+    message = {
+        "images": [
+            {"type": "image_url", "image_url": {"url": small}},
+            {"type": "image_url", "image_url": {"url": large}},
+        ],
+    }
+    out = _extract_image(message)
+    assert out.size == (512, 256)
+
+
+def test_extract_image_picks_largest_irrespective_of_order():
+    import base64, io
+    from openrouter import _extract_image
+    from PIL import Image
+
+    def _data_url(size):
+        img = Image.new("RGB", size, (0, 0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    # Large first, small second — both orderings must return the large one.
+    message = {
+        "images": [
+            {"type": "image_url", "image_url": {"url": _data_url((400, 200))}},
+            {"type": "image_url", "image_url": {"url": _data_url((100, 50))}},
+        ],
+    }
+    assert _extract_image(message).size == (400, 200)

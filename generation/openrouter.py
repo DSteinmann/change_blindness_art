@@ -20,20 +20,44 @@ CAPTION_MODEL = os.getenv("OPENROUTER_CAPTION_MODEL", "google/gemini-2.5-flash")
 IMAGE_SIZE = os.getenv("OPENROUTER_IMAGE_SIZE", "2K")
 
 
-def _extract_image(message: dict) -> Image.Image | None:
+def _decode_data_url(url: str) -> Image.Image | None:
+    if not url.startswith("data:image"):
+        return None
+    return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+
+
+def _collect_images(message: dict) -> list[Image.Image]:
+    """Pull every image attached to an OpenRouter chat-completion message."""
+    found: list[Image.Image] = []
     for img_item in message.get("images", []) or []:
         if img_item.get("type") == "image_url":
-            url = img_item.get("image_url", {}).get("url", "")
-            if url.startswith("data:image"):
-                return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+            img = _decode_data_url(img_item.get("image_url", {}).get("url", ""))
+            if img is not None:
+                found.append(img)
     content = message.get("content", "")
     if isinstance(content, list):
         for item in content:
             if isinstance(item, dict) and item.get("type") == "image_url":
-                url = item.get("image_url", {}).get("url", "")
-                if url.startswith("data:image"):
-                    return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
-    return None
+                img = _decode_data_url(item.get("image_url", {}).get("url", ""))
+                if img is not None:
+                    found.append(img)
+    return found
+
+
+def _extract_image(message: dict) -> Image.Image | None:
+    """Return the largest image in the response.
+
+    `gemini-3-pro-image-preview` sometimes returns multiple images per call
+    (a low-res preview followed by a full-res render); naively taking the
+    first one yields alternating 1K/2K outputs. Pick the largest by area.
+    """
+    images = _collect_images(message)
+    if not images:
+        return None
+    if len(images) > 1:
+        sizes = [im.size for im in images]
+        print(f"OpenRouter returned {len(images)} images: {sizes} - using largest")
+    return max(images, key=lambda im: im.size[0] * im.size[1])
 
 
 def _resolve_client(client: httpx.AsyncClient | None) -> tuple[httpx.AsyncClient, bool]:
