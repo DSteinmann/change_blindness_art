@@ -72,7 +72,9 @@ async def test_edit_raises_on_500():
             await edit_image(_png_data_url(), "x", "fake-key", client=client)
 
 
-async def test_edit_request_carries_image_and_prompt_no_mask():
+async def test_edit_request_nests_payload_under_input_key():
+    """Kontext silently ignores flat keys and runs no model. The body MUST be
+    nested under "input" — this test guards that bug from regressing."""
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -85,9 +87,11 @@ async def test_edit_request_carries_image_and_prompt_no_mask():
     async with httpx.AsyncClient(transport=transport) as client:
         await edit_image(img, "a fern unfurls", "fake-key", client=client)
     body = captured["body"]
-    assert body["image_url"] == img
-    assert body["prompt"] == "a fern unfurls"
-    assert body["sync_mode"] is True
+    assert "input" in body, "Kontext payload must be nested under 'input'"
+    inner = body["input"]
+    assert inner["image_url"] == img
+    assert inner["prompt"] == "a fern unfurls"
+    assert inner["sync_mode"] is True
     # Kontext is instruction-only; mask_url must not be in the payload.
-    assert "mask_url" not in body
+    assert "mask_url" not in inner
     assert captured["auth"] == "Key fake-key"

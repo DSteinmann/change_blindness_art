@@ -43,10 +43,15 @@ async def edit_image(
     if not api_key:
         raise ValueError("FAL_KEY not set")
 
+    # FLUX.1 Kontext requires the payload nested under "input"; flat keys are
+    # silently accepted by the endpoint but the model never runs, which is
+    # why earlier requests showed "no prompt / no image" on the fal dashboard.
     payload = {
-        "image_url": image_b64,
-        "prompt": prompt,
-        "sync_mode": True,
+        "input": {
+            "image_url": image_b64,
+            "prompt": prompt,
+            "sync_mode": True,
+        }
     }
 
     owned, created = _resolve_client(client)
