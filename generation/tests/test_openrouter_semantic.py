@@ -163,7 +163,8 @@ async def test_plan_edit_returns_proposed_instruction(tiny_png_b64):
     async with httpx.AsyncClient(transport=transport) as client:
         result = await plan_edit(
             image_b64=tiny_png_b64,
-            sector_name="upper-right",
+            target_sector="upper-right",
+            focus_sector="lower-left",
             prior_edits=[],
             api_key="fake-key",
             client=client,
@@ -173,7 +174,8 @@ async def test_plan_edit_returns_proposed_instruction(tiny_png_b64):
 
 async def test_plan_edit_returns_none_without_api_key(tiny_png_b64):
     result = await plan_edit(
-        image_b64=tiny_png_b64, sector_name="TL", prior_edits=[], api_key="",
+        image_b64=tiny_png_b64, target_sector="upper-left", focus_sector=None,
+        prior_edits=[], api_key="",
     )
     assert result is None
 
@@ -182,13 +184,13 @@ async def test_plan_edit_returns_none_on_error(tiny_png_b64):
     transport = _mock_transport(500, {"error": "boom"})
     async with httpx.AsyncClient(transport=transport) as client:
         result = await plan_edit(
-            image_b64=tiny_png_b64, sector_name="TL", prior_edits=[],
-            api_key="fake-key", client=client,
+            image_b64=tiny_png_b64, target_sector="upper-left", focus_sector=None,
+            prior_edits=[], api_key="fake-key", client=client,
         )
     assert result is None
 
 
-async def test_plan_edit_payload_includes_image_sector_and_history(tiny_png_b64):
+async def test_plan_edit_payload_includes_focus_target_and_history(tiny_png_b64):
     captured = {}
 
     def handler(request):
@@ -201,7 +203,8 @@ async def test_plan_edit_payload_includes_image_sector_and_history(tiny_png_b64)
     async with httpx.AsyncClient(transport=transport) as client:
         await plan_edit(
             image_b64=tiny_png_b64,
-            sector_name="upper-left",
+            target_sector="upper-left",
+            focus_sector="lower-right",
             prior_edits=["added a bird", "added a kite"],
             api_key="fake-key",
             client=client,
@@ -212,5 +215,34 @@ async def test_plan_edit_payload_includes_image_sector_and_history(tiny_png_b64)
     assert len(image_parts) == 1
     text = text_parts[0]["text"]
     assert "upper-left" in text
+    assert "lower-right" in text
+    assert "peripheral" in text.lower()
     assert "added a bird" in text
     assert "added a kite" in text
+
+
+async def test_plan_edit_omits_gaze_block_when_focus_unknown(tiny_png_b64):
+    captured = {}
+
+    def handler(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "x"}}]
+        })
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        await plan_edit(
+            image_b64=tiny_png_b64,
+            target_sector="centre",
+            focus_sector=None,
+            prior_edits=[],
+            api_key="fake-key",
+            client=client,
+        )
+    text = next(
+        p["text"] for p in captured["body"]["messages"][0]["content"]
+        if p["type"] == "text"
+    )
+    assert "FIXATED" not in text  # gaze block is omitted when focus is unknown
+    assert "centre" in text

@@ -201,7 +201,8 @@ async def caption_edit(
 
 async def plan_edit(
     image_b64: str,
-    sector_name: str,
+    target_sector: str,
+    focus_sector: str | None,
     prior_edits: list[str],
     api_key: str,
     *,
@@ -209,13 +210,13 @@ async def plan_edit(
     client: httpx.AsyncClient | None = None,
 ) -> str | None:
     """Ask a vision-language model to propose a scene-appropriate edit
-    instruction for the target sector. Returns a single-sentence prompt or
-    None on failure. The caller is expected to fall back to a curated default
-    when None is returned.
+    instruction.
 
-    This step gives the downstream edit model a prompt that actually fits the
-    image — without it, fixed prompts from sector_prompts.json produce things
-    like "a ladybug in a city skyline".
+    `target_sector` and `focus_sector` should be human-readable descriptions
+    ("upper-left", "lower-right", etc.) — the model otherwise has to guess what
+    "BR" means.
+
+    Returns a single-sentence prompt or None on failure.
     """
     if not api_key:
         return None
@@ -238,14 +239,24 @@ async def plan_edit(
             f"\n\nPrior edits already applied in this session (DO NOT repeat "
             f"any of these object classes or motifs):\n{bullets}"
         )
+    gaze_block = ""
+    if focus_sector:
+        gaze_block = (
+            f"\n\nThe participant is currently FIXATED on the {focus_sector} "
+            f"area. The change must go in the OPPOSITE area — the "
+            f"{target_sector} area — which is in their peripheral vision. "
+            f"This is a change-blindness study: the goal is for the participant "
+            f"to NOT notice the edit while they are looking elsewhere."
+        )
     instruction = (
         "Look at this image. Identify the scene type (e.g. urban skyline at "
         "night, rural landscape, indoor still life, portrait), its visual "
         "style (photograph, painting, illustration), and the existing palette "
-        "and lighting.\n\n"
-        f"Propose ONE edit to apply in the {sector_name} area of the image "
+        "and lighting."
+        f"{gaze_block}\n\n"
+        f"Propose ONE edit to apply in the {target_sector} area of the image "
         f"(imagine the image divided into a 3x3 grid; you are picking "
-        f"something for the {sector_name} cell). The edit MUST:\n"
+        f"something for the {target_sector} cell). The edit MUST:\n"
         "  - Be an object, creature, or phenomenon that would plausibly "
         "appear in THIS kind of scene (no jellyfish in a city; no skyscrapers "
         "in a forest; no fantastical creatures in a real photograph).\n"

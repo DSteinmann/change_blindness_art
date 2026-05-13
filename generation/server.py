@@ -472,9 +472,13 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         sid_for_history = session_manager.current_session_id or "anon"
         prior_for_planner = semantic_history.captions(sid_for_history)
         planner_image = shrink_for_api(init_image, max_edge=CAPTION_INPUT_MAX_EDGE)
+        # The model needs human-readable sector names ("BR" means nothing to it)
+        # and the focus sector as context for the peripheral-vision framing.
+        from semantic import _describe_sector
         planned = await plan_edit(
             image_b64=planner_image,
-            sector_name=target,
+            target_sector=_describe_sector(target),
+            focus_sector=_describe_sector(focus_sector) if focus_sector else None,
             prior_edits=prior_for_planner,
             api_key=OPENROUTER_API_KEY,
             salience=SEMANTIC_SALIENCE,
