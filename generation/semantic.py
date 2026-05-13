@@ -116,11 +116,14 @@ def build_messages(
         "\n".join(label_lines)
         + "\n\n"
         + anchor
-        + f" Add ONE new element in the {target_sector} sector "
-        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). "
-        "The new element should feel like it belongs in the scene — like it was "
-        "always there, not like a pasted sticker. Keep every prior addition "
-        "visible and the rest of the image unchanged."
+        + f" Make ONE deliberate artistic change in the {target_sector} sector "
+        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). You have full "
+        "creative freedom: you may add a new element, transform or replace "
+        "something that is already there, or remove something to reveal what "
+        "lies behind it. Surprise the viewer — bold, surreal, atmospheric, or "
+        "subtle interventions are all welcome, as long as the result fits the "
+        "scene's mood. Keep every prior change visible and the rest of the "
+        "image unchanged."
     )
     content.append({"type": "text", "text": instruction})
 

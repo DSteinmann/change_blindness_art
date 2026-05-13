@@ -138,10 +138,12 @@ async def caption_edit(
                 {"type": "image_url", "image_url": {"url": current_b64}},
                 {"type": "text", "text": (
                     "Compare these two images. The first is the scene BEFORE the "
-                    "latest edit; the second is AFTER. Exactly ONE small edit was "
-                    f"applied somewhere in the {sector_name} region. In one sentence, "
-                    "describe ONLY what is new or different in the second image. "
-                    "Do not describe anything that already appears in the first image. "
+                    "latest edit; the second is AFTER. Exactly ONE deliberate change "
+                    f"was made somewhere in the {sector_name} region — something may "
+                    "have been added, transformed, or removed. In one sentence, "
+                    "describe ONLY what is different in the second image relative "
+                    "to the first. Phrase removals naturally (e.g. \"the lamppost "
+                    "is gone\"). Do not describe anything that is the same in both. "
                     "Reply with just the caption - no preface."
                 )},
             ],
