@@ -158,10 +158,26 @@ def build_messages(
                 f"in the {turn.target_sector} sector."
             )
 
+    anchor_index = len(recent)
     if recent:
-        anchor = f"Produce a new image based on IMAGE {len(recent)} (the most recent state)."
+        anchor = (
+            f"Take IMAGE {anchor_index} (the most recent state) as your starting "
+            "canvas. Your output MUST be pixel-for-pixel identical to IMAGE "
+            f"{anchor_index} EVERYWHERE EXCEPT inside the rectangle specified below. "
+            "Do NOT regenerate the scene from scratch. Do NOT change the camera "
+            "position, framing, time of day, weather, or any pixel outside the "
+            "rectangle. The output must clearly be the SAME PHOTOGRAPH OR SCENE "
+            f"as IMAGE {anchor_index}, with only one localised modification."
+        )
     else:
-        anchor = "Produce a new image based on IMAGE 0."
+        anchor = (
+            "Take IMAGE 0 as your starting canvas. Your output MUST be "
+            "pixel-for-pixel identical to IMAGE 0 EVERYWHERE EXCEPT inside the "
+            "rectangle specified below. Do NOT regenerate the scene from scratch. "
+            "Do NOT change the camera position, framing, time of day, weather, "
+            "or any pixel outside the rectangle. The output must clearly be the "
+            "SAME PHOTOGRAPH OR SCENE as IMAGE 0, with only one localised modification."
+        )
 
     x1, y1, x2, y2 = region
     salience_clause = SALIENCE_PROMPTS.get(salience, SALIENCE_PROMPTS["subtle"])
@@ -169,13 +185,14 @@ def build_messages(
         "\n".join(label_lines)
         + "\n\n"
         + anchor
-        + f" Make ONE deliberate change in the {target_sector} sector "
-        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). You may add a "
-        "new element, transform or replace something already there, or remove "
-        "something to reveal what lies behind it.\n\n"
+        + f"\n\nInside the {target_sector} sector "
+        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}), make ONE "
+        "deliberate change. You may add a new element, transform or replace "
+        "something already there, or remove something to reveal what lies behind it.\n\n"
         f"{SCENE_COHERENCE_CLAUSE}\n\n"
         f"{salience_clause}\n\n"
-        "Keep every prior change visible and the rest of the image unchanged."
+        "REMINDER: Every pixel outside the rectangle, and every prior change "
+        "shown in IMAGES 1..N, must remain visible and identical in your output."
     )
     content.append({"type": "text", "text": instruction})
 

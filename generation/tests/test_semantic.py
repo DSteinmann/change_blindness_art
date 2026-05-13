@@ -105,7 +105,8 @@ def test_build_messages_includes_prior_edit_images_in_user_turn(tiny_png_b64):
     assert "IMAGE 0 is the ORIGINAL" in text
     assert "IMAGE 1" in text and "TR" in text and "a butterfly drifted in" in text
     assert "IMAGE 2" in text and "BL" in text and "a paper boat sailed" in text
-    assert "Produce a new image based on IMAGE 2" in text
+    assert "Take IMAGE 2" in text
+    assert "pixel-for-pixel identical to IMAGE 2" in text
 
 
 def test_build_messages_caps_replay_to_history_window(tiny_png_b64):
