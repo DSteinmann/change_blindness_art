@@ -73,7 +73,10 @@ async def test_semantic_payload_is_single_user_turn_with_all_images(tiny_png_b64
     images = [p for p in sent_messages[0]["content"] if p["type"] == "image_url"]
     assert len(images) == 2  # original + 1 prior edit
     text = next(p["text"] for p in sent_messages[0]["content"] if p["type"] == "text")
-    assert "TL" in text
+    # The new prompt names sectors in natural language ("upper-left" for TL)
+    # and deliberately avoids the raw sector code in the location-of-edit
+    # phrasing (it appears only in prior-edit captions).
+    assert "upper-left" in text
     assert "a butterfly drifted in" in text
     assert body["image_config"]["image_size"] == "2K"
 
