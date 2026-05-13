@@ -83,7 +83,12 @@ def test_build_messages_returns_single_user_turn_with_original_only(tiny_png_b64
     text = text_parts[0]["text"]
     assert "IMAGE 0" in text
     assert "TL" in text
-    assert "x1=0, y1=0, x2=100, y2=100" in text
+    # Pixel coordinates are deliberately NOT in the prompt — they make the model
+    # render bounding-box rectangles into the output. Sector name + natural
+    # language only.
+    assert "upper-left" in text
+    assert "x1=" not in text
+    assert "pixel rectangle" not in text
 
 
 def test_build_messages_includes_prior_edit_images_in_user_turn(tiny_png_b64):
@@ -133,6 +138,28 @@ def test_build_messages_uses_subtle_salience_by_default(tiny_png_b64):
     text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
     assert "SMALL AND PLAUSIBLE" in text
     assert "peripheral vision" in text
+
+
+def test_build_messages_forbids_drawing_rectangles_or_markers(tiny_png_b64):
+    messages = build_messages(
+        original_b64=tiny_png_b64, turns=[],
+        target_sector="TR", region=(0, 0, 100, 100),
+    )
+    text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+    assert "DO NOT draw any rectangle" in text
+    assert "inset" in text
+    assert "annotation" in text
+
+
+def test_build_messages_uses_natural_sector_names(tiny_png_b64):
+    """Sanity check that every sector resolves to a human-readable phrase."""
+    for code, desc in (("TL", "upper-left"), ("MC", "centre"), ("BR", "lower-right")):
+        messages = build_messages(
+            original_b64=tiny_png_b64, turns=[],
+            target_sector=code, region=(0, 0, 10, 10),
+        )
+        text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+        assert desc in text
 
 
 def test_build_messages_always_includes_scene_coherence_clause(tiny_png_b64):

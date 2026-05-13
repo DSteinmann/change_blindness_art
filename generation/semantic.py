@@ -48,6 +48,26 @@ SCENE_COHERENCE_CLAUSE = (
     "unless similar elements already appear in the scene."
 )
 
+# Natural-language descriptions of each sector. We avoid passing literal pixel
+# coordinates because image models routinely interpret them as bounding-box
+# annotations and draw the rectangle outline into the output.
+SECTOR_DESCRIPTIONS: dict[str, str] = {
+    "TL": "upper-left",
+    "TC": "upper-centre",
+    "TR": "upper-right",
+    "ML": "middle-left",
+    "MC": "centre",
+    "MR": "middle-right",
+    "BL": "lower-left",
+    "BC": "lower-centre",
+    "BR": "lower-right",
+}
+
+
+def _describe_sector(name: str) -> str:
+    return SECTOR_DESCRIPTIONS.get(name, name)
+
+
 SALIENCE_PROMPTS = {
     "subtle": (
         "Make the change SMALL AND PLAUSIBLE — a minor naturalistic detail "
@@ -162,41 +182,39 @@ def build_messages(
     if recent:
         anchor = (
             f"Take IMAGE {anchor_index} (the most recent state) as your starting "
-            "canvas. Your output MUST be pixel-for-pixel identical to IMAGE "
-            f"{anchor_index} EVERYWHERE EXCEPT inside the rectangle specified below. "
+            "canvas. Your output MUST clearly be the SAME PHOTOGRAPH OR SCENE "
+            f"as IMAGE {anchor_index}, with only one small localised modification. "
             "Do NOT regenerate the scene from scratch. Do NOT change the camera "
-            "position, framing, time of day, weather, or any pixel outside the "
-            "rectangle. The output must clearly be the SAME PHOTOGRAPH OR SCENE "
-            f"as IMAGE {anchor_index}, with only one localised modification."
+            "position, framing, time of day, weather, or anything outside the "
+            "target area."
         )
     else:
         anchor = (
-            "Take IMAGE 0 as your starting canvas. Your output MUST be "
-            "pixel-for-pixel identical to IMAGE 0 EVERYWHERE EXCEPT inside the "
-            "rectangle specified below. Do NOT regenerate the scene from scratch. "
+            "Take IMAGE 0 as your starting canvas. Your output MUST clearly be "
+            "the SAME PHOTOGRAPH OR SCENE as IMAGE 0, with only one small "
+            "localised modification. Do NOT regenerate the scene from scratch. "
             "Do NOT change the camera position, framing, time of day, weather, "
-            "or any pixel outside the rectangle. The output must clearly be the "
-            "SAME PHOTOGRAPH OR SCENE as IMAGE 0, with only one localised modification."
+            "or anything outside the target area."
         )
 
-    x1, y1, x2, y2 = region
     salience_clause = SALIENCE_PROMPTS.get(salience, SALIENCE_PROMPTS["subtle"])
+    where = _describe_sector(target_sector)
     instruction = (
         "\n".join(label_lines)
         + "\n\n"
         + anchor
-        + f"\n\nInside the {target_sector} sector "
-        f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}), make ONE "
-        "deliberate change. You may add a new element, transform or replace "
-        "something already there, or remove something to reveal what lies behind it.\n\n"
-        "IMPORTANT: The rectangle coordinates are INVISIBLE METADATA — they "
-        "tell you WHERE to place the change, not WHAT to draw. Do NOT draw the "
-        "rectangle's outline, border, or any coloured box (red, white, or any "
-        "colour) in the output image. The rectangle must be completely "
-        "invisible; a viewer must not be able to tell where it was.\n\n"
+        + f"\n\nLocation: place your change in the {where} area of the image "
+        "(imagine the image divided into a three-by-three grid; your change "
+        f"belongs in the {where} cell). Make ONE deliberate change there — you "
+        "may add a new element, transform or replace something already there, "
+        "or remove something to reveal what lies behind it.\n\n"
+        "DO NOT draw any rectangle, frame, inset, picture-in-picture, "
+        "annotation, marker, circle, arrow, label, or any UI-style overlay in "
+        "the output. The output must look like a normal photograph or artwork "
+        "with no boxes, borders, or pointers around the edited region.\n\n"
         f"{SCENE_COHERENCE_CLAUSE}\n\n"
         f"{salience_clause}\n\n"
-        "REMINDER: Every pixel outside the rectangle, and every prior change "
+        "REMINDER: Everything outside the target area, and every prior change "
         "shown in IMAGES 1..N, must remain visible and identical in your output."
     )
     content.append({"type": "text", "text": instruction})
