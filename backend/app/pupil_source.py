@@ -29,6 +29,46 @@ def _is_binocular(gaze_pt: dict) -> bool:
     return ".01" in topic
 
 
+def average_gaze_points(
+    gaze_pts: list[dict],
+    confidence_threshold: float,
+) -> tuple[dict, float] | None:
+    """Collapse N gaze samples from a single world frame into one consolidated
+    payload. Variance shrinks by sqrt(N) so the resulting cursor is much
+    steadier than the per-sample 200 Hz stream while still tracking saccades.
+
+    Returns (gaze_payload, timestamp) or None when no usable samples exist.
+    `valid` is set when the *averaged* confidence clears the threshold; this
+    smooths over single-sample confidence dips without admitting an entirely
+    low-confidence frame.
+    """
+    if not gaze_pts:
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    confs: list[float] = []
+    latest_ts = 0.0
+    for g in gaze_pts:
+        norm = g.get("norm_pos") or [0.5, 0.5]
+        xs.append(float(norm[0]))
+        ys.append(float(norm[1]))
+        confs.append(float(g.get("confidence") or 0.0))
+        ts = g.get("timestamp")
+        if ts is not None:
+            latest_ts = max(latest_ts, float(ts))
+    n = len(xs)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    mean_conf = sum(confs) / n
+    payload = {
+        "x_norm": clamp(mean_x),
+        # Pupil's surface coords are bottom-left origin; flip Y to top-left.
+        "y_norm": clamp(1.0 - mean_y),
+        "valid": mean_conf >= confidence_threshold,
+    }
+    return payload, latest_ts
+
+
 def filter_to_one_source(gaze_pts: list[dict]) -> list[dict]:
     """Pupil publishes binocular + both monocular gazes for the same timestamp.
     Forwarding all of them yanks the smoothed gaze cursor between disagreeing
@@ -188,22 +228,21 @@ class PupilSource:
                                 f"surface='{surface_name}' gaze_pts={kept}/{raw_count} "
                                 f"fix_pts={len(fixations_on_surfaces)}"
                             )
-                        for gaze_pt in gaze_on_surfaces:
-                            norm_pos = gaze_pt.get("norm_pos", [0.5, 0.5])
-                            confidence = float(gaze_pt.get("confidence", 0.0))
-                            
-                            # Pupil Capture Surface Tracker uses OpenGL convention:
-                            # (0,0) = bottom-left, (1,1) = top-right
-                            # Screen coords: (0,0) = top-left, (1,1) = bottom-right
-                            # So we MUST flip Y!
-                            x_norm = clamp(float(norm_pos[0]))
-                            y_norm = clamp(1.0 - float(norm_pos[1]))  # Flip Y for screen coords
-                            
-                            valid = confidence >= self._settings.pupil_confidence_threshold
-                            ts = float(gaze_pt.get("timestamp", time.time()))
-                            
-                            gaze_payload = {"x_norm": x_norm, "y_norm": y_norm, "valid": valid}
-                            self._dispatch({"ts": ts, "event": "sample", "gaze": gaze_payload})
+                        # Collapse all samples from this world frame into one
+                        # averaged emission. 200 Hz of microsaccade noise gets
+                        # filtered to ~30 Hz of stable gaze with sqrt(N)
+                        # variance reduction — much steadier than per-sample
+                        # exponential smoothing on the frontend.
+                        averaged = average_gaze_points(
+                            gaze_on_surfaces, self._settings.pupil_confidence_threshold,
+                        )
+                        if averaged is not None:
+                            gaze_payload, ts = averaged
+                            self._dispatch({
+                                "ts": ts or time.time(),
+                                "event": "sample",
+                                "gaze": gaze_payload,
+                            })
                             samples_forwarded += 1
                             surface_samples += 1
                             last_gaze_emit = time.monotonic()

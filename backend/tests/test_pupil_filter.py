@@ -61,3 +61,46 @@ def test_missing_topic_and_base_data_treated_as_monocular():
     pts = [{"timestamp": 1.0, "confidence": 0.5, "norm_pos": [0.5, 0.5]}]
     out = filter_to_one_source(pts)
     assert len(out) == 1
+
+
+# ---- average_gaze_points -------------------------------------------------
+
+from backend.app.pupil_source import average_gaze_points
+
+
+def test_average_empty_returns_none():
+    assert average_gaze_points([], confidence_threshold=0.6) is None
+
+
+def test_average_means_norm_pos_and_flips_y():
+    pts = [
+        {"norm_pos": [0.2, 0.2], "confidence": 0.9, "timestamp": 1.0},
+        {"norm_pos": [0.4, 0.8], "confidence": 0.9, "timestamp": 1.1},
+    ]
+    payload, ts = average_gaze_points(pts, confidence_threshold=0.6)
+    assert abs(payload["x_norm"] - 0.3) < 1e-9
+    # Mean y = 0.5 → flipped = 0.5.
+    assert abs(payload["y_norm"] - 0.5) < 1e-9
+    assert payload["valid"] is True
+    assert ts == 1.1  # latest timestamp wins
+
+
+def test_average_marks_invalid_when_mean_conf_below_threshold():
+    pts = [
+        {"norm_pos": [0.5, 0.5], "confidence": 0.4, "timestamp": 1.0},
+        {"norm_pos": [0.5, 0.5], "confidence": 0.3, "timestamp": 1.1},
+    ]
+    payload, _ = average_gaze_points(pts, confidence_threshold=0.6)
+    assert payload["valid"] is False
+
+
+def test_average_smooths_through_single_low_confidence_dip():
+    """One low-conf sample shouldn't invalidate an otherwise good frame."""
+    pts = [
+        {"norm_pos": [0.5, 0.5], "confidence": 0.9, "timestamp": 1.0},
+        {"norm_pos": [0.5, 0.5], "confidence": 0.2, "timestamp": 1.05},
+        {"norm_pos": [0.5, 0.5], "confidence": 0.9, "timestamp": 1.1},
+    ]
+    payload, _ = average_gaze_points(pts, confidence_threshold=0.6)
+    # Mean conf = 0.667 >= 0.6 → still valid.
+    assert payload["valid"] is True
