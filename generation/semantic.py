@@ -21,6 +21,33 @@ from openrouter import _extract_image
 HISTORY_WINDOW = 2
 CAPTION_PREFIX = "CAPTION:"
 
+# Always-applied clause that grounds the edit in the existing scene's content
+# and rendering. Without this, the model treats "creative freedom" as licence
+# to introduce wildly out-of-context elements (jellyfish in a city skyline).
+SCENE_COHERENCE_CLAUSE = (
+    "BEFORE making any change, infer the following from IMAGE 0:\n"
+    "  - SCENE TYPE: e.g. urban skyline at night, rural landscape, indoor "
+    "still life, portrait, forest, coastal seascape.\n"
+    "  - VISUAL STYLE: e.g. photorealistic photograph, oil painting, "
+    "watercolour, 3D render, illustration. Match the existing lens "
+    "characteristics, grain, sharpness, and rendering technique exactly.\n"
+    "  - COLOUR PALETTE and LIGHTING: the dominant colours, brightness "
+    "range, time of day, and direction of light.\n\n"
+    "Your edit MUST honour all three. Specifically:\n"
+    "  - Only introduce objects, creatures, materials, or phenomena that "
+    "would plausibly exist in THIS kind of scene. A lamppost, bird, plume "
+    "of steam, or piece of signage belongs in a city; a flower, deer, or "
+    "shaft of light belongs in a forest; tableware or a folded napkin "
+    "belongs in a still life. Do NOT add things that violate the scene's "
+    "genre (no jellyfish in a skyline, no skyscraper in a meadow, no "
+    "magical creature in a photograph of a real place).\n"
+    "  - Render in the SAME style as the rest of the image — same medium, "
+    "sharpness, contrast, and post-processing.\n"
+    "  - Use the SAME palette and brightness as the surrounding pixels. "
+    "Do not introduce a glowing, neon, or strongly contrasting element "
+    "unless similar elements already appear in the scene."
+)
+
 SALIENCE_PROMPTS = {
     "subtle": (
         "Make the change SMALL AND PLAUSIBLE — a minor naturalistic detail "
@@ -146,6 +173,7 @@ def build_messages(
         f"(pixel rectangle x1={x1}, y1={y1}, x2={x2}, y2={y2}). You may add a "
         "new element, transform or replace something already there, or remove "
         "something to reveal what lies behind it.\n\n"
+        f"{SCENE_COHERENCE_CLAUSE}\n\n"
         f"{salience_clause}\n\n"
         "Keep every prior change visible and the rest of the image unchanged."
     )

@@ -134,6 +134,20 @@ def test_build_messages_uses_subtle_salience_by_default(tiny_png_b64):
     assert "peripheral vision" in text
 
 
+def test_build_messages_always_includes_scene_coherence_clause(tiny_png_b64):
+    for salience in ("subtle", "moderate", "bold"):
+        messages = build_messages(
+            original_b64=tiny_png_b64, turns=[],
+            target_sector="TL", region=(0, 0, 10, 10),
+            salience=salience,
+        )
+        text = next(p["text"] for p in messages[0]["content"] if p["type"] == "text")
+        assert "SCENE TYPE" in text
+        assert "VISUAL STYLE" in text
+        assert "jellyfish" in text  # the cautionary anti-example
+        assert "SAME palette" in text
+
+
 def test_build_messages_switches_salience_clause(tiny_png_b64):
     bold = build_messages(
         original_b64=tiny_png_b64, turns=[],
