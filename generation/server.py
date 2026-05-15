@@ -120,26 +120,35 @@ async def _run_fal_inpaint(
     region: tuple[int, int, int, int],
     full_prompt: str,
 ) -> "Image.Image":
-    """Instruction-based edit via fal.ai. `full_prompt` is the complete string
-    sent to the model (no further wrapping). Result is composited back onto
-    the original-resolution input so pixels outside the target sector stay
-    byte-identical."""
+    """Mask-based edit via fal.ai GPT-Image-2. A white-on-black mask of the
+    target sector constrains the model at the protocol level; the result is
+    still composited back onto the original-resolution input as belt-and-braces."""
     # Resize input to bound payload + cost.
     max_edge = 1024
     work = init_image.copy()
+    ow, oh = work.size
     if max(work.size) > max_edge:
         work.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    sw, sh = work.size
+
+    # Scale the target rectangle into the resized image's coordinate system
+    # and build a mask matching the input dimensions (white = editable).
+    sx1 = region[0] * sw // ow
+    sy1 = region[1] * sh // oh
+    sx2 = region[2] * sw // ow
+    sy2 = region[3] * sh // oh
+    mask = create_mask((sw, sh), (sx1, sy1, sx2, sy2))
 
     edited = await fal_inpaint.edit_image(
         image_b64=_pil_to_data_url(work),
         prompt=full_prompt,
         api_key=FAL_KEY,
+        mask_b64=_pil_to_data_url(mask),
     )
 
-    # Composite the target-sector region of Kontext's output back onto the
-    # full-resolution input. Kontext is designed to leave the rest of the
-    # scene alone; the client-side composite is belt-and-braces against any
-    # residual drift AND restores the original input's resolution.
+    # The mask already preserves out-of-sector pixels; the client-side
+    # composite restores the original input's full resolution and guards
+    # against any residual edge drift.
     return composite_sector(init_image, edited, region, feather=4)
 
 app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0")

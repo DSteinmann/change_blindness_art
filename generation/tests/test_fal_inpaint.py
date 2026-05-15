@@ -91,6 +91,23 @@ async def test_edit_request_uses_flat_payload():
     assert body["image_urls"] == [img]
     assert body["prompt"] == "a fern unfurls"
     assert body["sync_mode"] is True
-    # Seedream is instruction-only; mask_url must not be in the payload.
+    # No mask passed in this call → mask_url omitted.
     assert "mask_url" not in body
     assert captured["auth"] == "Key fake-key"
+
+
+async def test_edit_request_includes_mask_url_when_supplied():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"images": [{"url": _png_data_url()}]})
+
+    transport = _mock_transport(handler)
+    img = _png_data_url()
+    mask = _png_data_url(colour=(255, 255, 255))
+    async with httpx.AsyncClient(transport=transport) as client:
+        await edit_image(img, "x", "fake-key", mask_b64=mask, client=client)
+    body = captured["body"]
+    assert body["mask_url"] == mask
+    assert body["image_urls"] == [img]

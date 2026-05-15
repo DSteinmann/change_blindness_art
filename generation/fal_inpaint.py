@@ -1,8 +1,10 @@
-"""fal.ai instruction-based image-edit client.
+"""fal.ai image-edit client.
 
-Uses ByteDance Seedream V5 Lite Edit by default. Instruction-only (no mask);
-fal documents it as having strong editing consistency and supports multiple
-input images per call.
+Uses OpenAI GPT-Image-2 Edit by default. Unlike instruction-only models
+(Kontext, Seedream), this one accepts an optional `mask_url`: a black-and-
+white PNG where WHITE pixels are the region the model may edit and BLACK
+pixels must be preserved exactly. That gives protocol-level spatial control
+— the model cannot place the change outside the sector.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import httpx
 from PIL import Image
 
 FAL_BASE_URL = os.getenv("FAL_BASE_URL", "https://fal.run")
-FAL_EDIT_MODEL = os.getenv("FAL_EDIT_MODEL", "fal-ai/bytedance/seedream/v5/lite/edit")
+FAL_EDIT_MODEL = os.getenv("FAL_EDIT_MODEL", "openai/gpt-image-2/edit")
 
 
 def _resolve_client(client: httpx.AsyncClient | None) -> tuple[httpx.AsyncClient, bool]:
@@ -28,24 +30,28 @@ async def edit_image(
     prompt: str,
     api_key: str,
     *,
+    mask_b64: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> Image.Image:
-    """Run instruction-based image editing and return the result as a PIL Image.
+    """Run image editing and return the result as a PIL Image.
 
     `image_b64` is a data URL of the input image. `prompt` is the natural-
-    language instruction (must include where + what — Kontext has no mask).
+    language instruction. `mask_b64`, when supplied, is a data URL of a
+    black-and-white PNG (white = editable, black = preserved) matching the
+    input dimensions — the model is constrained to the white region.
     """
     if not api_key:
         raise ValueError("FAL_KEY not set")
 
     # Direct HTTP POSTs to fal.run use FLAT keys; the "input" wrapper is a
     # JS-SDK-only convention. Wrapping the body silently produces 422.
-    # Seedream's edit schema uses `image_urls` (plural list).
     payload = {
         "image_urls": [image_b64],
         "prompt": prompt,
         "sync_mode": True,
     }
+    if mask_b64:
+        payload["mask_url"] = mask_b64
 
     owned, created = _resolve_client(client)
     try:
