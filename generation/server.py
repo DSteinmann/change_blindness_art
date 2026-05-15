@@ -107,11 +107,17 @@ def _compose_fal_prompt(content_prompt: str, target_sector: str) -> str:
     return (
         f"{content_prompt.rstrip('.')}. The change must appear ONLY in the "
         f"{where} area of the image (imagine the image divided into a 3x3 "
-        f"grid; the change belongs in the {where} cell). Keep every other "
-        "part of the photograph exactly as it is in the input — same camera "
-        "position, framing, lighting, time of day, palette, and all other "
-        "content unchanged. Do not draw any borders, frames, vignettes, "
-        "brackets, annotations, markers, or text overlays anywhere in the output."
+        f"grid; the change belongs in the {where} cell). Render the new "
+        "content photorealistically so it blends seamlessly into the existing "
+        "photograph: match the scene's grain, noise, sharpness, depth of "
+        "field, colour grading, white balance, and the direction and "
+        "softness of the existing light. It must look like it was captured "
+        "in the same photo, not pasted or illustrated on top. Keep every "
+        "other part of the photograph exactly as it is in the input — same "
+        "camera position, framing, lighting, time of day, palette, and all "
+        "other content unchanged. Do not draw any borders, frames, "
+        "vignettes, brackets, annotations, markers, or text overlays anywhere "
+        "in the output."
     )
 
 
