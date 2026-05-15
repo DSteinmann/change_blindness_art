@@ -80,3 +80,13 @@ def test_load_session_accepts_legacy_metadata_without_edit_history(tmp_path):
     sm = SessionManager(tmp_path)
     metadata = sm.load_session(sid)
     assert metadata["sequence"][0]["prompt"] == "p"
+
+
+def test_recent_captions_returns_edit_history(tmp_path):
+    sm = SessionManager(tmp_path)
+    sm.start_new_session(runtime={"mode": "semantic"})
+    assert sm.recent_captions() == []
+    for i in range(7):
+        sm.save_generation(_tiny_image(), "TL", "p", "BR", caption=f"edit {i}")
+    # Sliding window of 5, oldest dropped.
+    assert sm.recent_captions() == ["edit 2", "edit 3", "edit 4", "edit 5", "edit 6"]

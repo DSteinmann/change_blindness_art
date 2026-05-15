@@ -513,8 +513,11 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         # passed to the fal edit model. Without this, the prompt comes from
         # sector_prompts.json regardless of scene (e.g. "add a ladybug"
         # against a city skyline).
-        sid_for_history = session_manager.current_session_id or "anon"
-        prior_for_planner = semantic_history.captions(sid_for_history)
+        # The captioner persists what actually changed into the session's
+        # edit_history; the planner reads that so it diverges instead of
+        # cycling birds/boats forever. (semantic_history is only populated by
+        # the OpenRouter multi-turn path, never in fal mode.)
+        prior_for_planner = session_manager.recent_captions()
         planner_image = shrink_for_api(init_image, max_edge=CAPTION_INPUT_MAX_EDGE)
         # The model needs human-readable sector names ("BR" means nothing to it)
         # and the focus sector as context for the peripheral-vision framing.

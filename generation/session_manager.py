@@ -68,6 +68,11 @@ class SessionManager:
         self.metadata["calibration"] = calibration
         self._save_metadata()
 
+    def recent_captions(self) -> list:
+        """Sliding window of recent edit captions for the active session.
+        Used by the fal planner so it can diverge from what's already there."""
+        return list(self.metadata.get("edit_history", []))
+
     def update_caption(
         self,
         session_id: str,
