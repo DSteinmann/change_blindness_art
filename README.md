@@ -1,5 +1,7 @@
 # BlinkArt
 
+[![CI](https://github.com/DSteinmann/change_blindness_art/actions/workflows/ci.yml/badge.svg)](https://github.com/DSteinmann/change_blindness_art/actions/workflows/ci.yml)
+
 **Using Change Blindness for AI-Generated Image Modifications in Artworks**
 
 BlinkArt is a real-time eye-tracking system for studying **change blindness** and **peripheral perception**. It tracks where you look, generates AI-modified images in your peripheral vision, and swaps them in during blinks—when your visual system is naturally suppressed. It can author changes autonomously, producing self-documented visual narratives without hand-crafted prompts.
