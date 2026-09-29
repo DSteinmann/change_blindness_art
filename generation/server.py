@@ -7,8 +7,10 @@ import base64
 import io
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 import uvicorn
@@ -69,7 +71,10 @@ IDLE_TICK_SEC = 30
 CAPTION_INPUT_MAX_EDGE = 512
 PROMPTS_FILE = Path(__file__).parent / "prompts.txt"
 SECTOR_PROMPTS_FILE = Path(__file__).parent / "sector_prompts.json"
-SESSIONS_DIR = Path("/app/assets/sessions") if Path("/app/assets").exists() else Path(__file__).parent / "sessions"
+SESSIONS_DIR = Path(
+    os.getenv("SESSIONS_ASSETS_DIR")
+    or ("/app/assets/sessions" if Path("/app/assets").exists() else Path(__file__).parent / "sessions")
+)
 
 
 def _runtime_snapshot() -> dict[str, Any]:
@@ -321,15 +326,20 @@ class StartSessionRequest(BaseModel):
 
 @app.post("/session/start")
 async def start_session(req: Optional[StartSessionRequest] = None) -> dict:
+    global _last_session_started_ts
     req = req or StartSessionRequest()
-    prev_sid = session_manager.current_session_id
-    sid = session_manager.start_new_session(
-        session_id=req.session_id,
-        participant_id=req.participant_id,
-        runtime=_runtime_snapshot(),
-    )
-    if prev_sid and prev_sid != sid:
-        semantic_history.clear(prev_sid)
+    # Wait for any in-flight /generate so its result lands in the previous
+    # participant's session instead of becoming index 0 of the new one.
+    async with _idle_lock or nullcontext():
+        prev_sid = session_manager.current_session_id
+        sid = session_manager.start_new_session(
+            session_id=req.session_id,
+            participant_id=req.participant_id,
+            runtime=_runtime_snapshot(),
+        )
+        if prev_sid and prev_sid != sid:
+            semantic_history.clear(prev_sid)
+        _last_session_started_ts = time.time()
     if _backend_client is not None:
         try:
             await _backend_client.post(
@@ -339,8 +349,6 @@ async def start_session(req: Optional[StartSessionRequest] = None) -> dict:
             )
         except Exception as exc:
             print(f"session_started relay failed: {exc}")
-    global _last_session_started_ts
-    _last_session_started_ts = time.time()
     return {"session_id": sid, "status": "recording", "participant_id": req.participant_id}
 
 
@@ -376,6 +384,14 @@ async def get_session(session_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
 
+# Must be registered before /session/replay/{session_id}, which would
+# otherwise swallow "stop" as a session id.
+@app.post("/session/replay/stop")
+async def stop_replay() -> dict:
+    replay_manager.stop_replay()
+    return {"status": "stopped"}
+
+
 @app.post("/session/replay/{session_id}")
 async def start_replay(session_id: str) -> dict:
     try:
@@ -384,12 +400,6 @@ async def start_replay(session_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     total = len(replay_manager.replay_metadata["sequence"]) if replay_manager.replay_metadata else 0
     return {"session_id": session_id, "status": "replaying", "total_generations": total}
-
-
-@app.post("/session/replay/stop")
-async def stop_replay() -> dict:
-    replay_manager.stop_replay()
-    return {"status": "stopped"}
 
 
 @app.get("/session/replay/next")
@@ -407,7 +417,9 @@ async def replay_next() -> Response:
         media_type="image/png",
         headers={
             "X-Sector": entry["target_sector"],
-            "X-Prompt": entry["prompt"][:100],
+            # HTTP headers must be latin-1; planner prompts can contain any
+            # unicode (curly quotes, emoji), so percent-encode.
+            "X-Prompt": quote(entry["prompt"][:100]),
             "X-Index": str(entry["index"]),
         },
     )
@@ -680,7 +692,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         content=buf.getvalue(),
         media_type="image/png",
         headers={
-            "X-Prompt-Used": prompt[:100],
+            "X-Prompt-Used": quote(prompt[:100]),
             "X-Prompt-Index": str(prompt_bank.prompt_index - 1),
             "X-Target-Sector": target,
         },

@@ -4,7 +4,7 @@ import { GazeStream } from "./gaze.js";
 import { FixationTracker } from "./fixation.js";
 import { GenerationController } from "./generation.js";
 
-const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/pexels-peng-liu-45946-169647.png`;
+const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/pexels-tbd-traveller-2149583744-30732757.jpg`;
 
 async function loadDefaultBaseImage(controller) {
   try {

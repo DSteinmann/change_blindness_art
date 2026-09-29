@@ -33,7 +33,13 @@ class SessionManager:
         which makes replays reproducible even if the code or env changes.
         """
         if session_id is None:
-            session_id = f"session_{int(time.time())}"
+            base = f"session_{int(time.time())}"
+            session_id, n = base, 1
+            # Two rotations in the same second would otherwise overwrite the
+            # first session's metadata and images.
+            while (self.sessions_dir / session_id).exists():
+                session_id = f"{base}_{n}"
+                n += 1
 
         self.current_session_id = session_id
         self.current_session_dir = self.sessions_dir / session_id

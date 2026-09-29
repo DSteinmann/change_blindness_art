@@ -4,11 +4,9 @@ A real-time eye-tracking platform for studying **change blindness** and **periph
 
 Built for **researchers** studying visual perception and **artists** exploring gaze-reactive installations.
 
-![Architecture](docs/architecture-diagram.png)
-
 ## What It Does
 
-1. **Tracks your gaze** using Pupil Core or Meta Aria glasses
+1. **Tracks your gaze** using a Pupil Core eye tracker
 2. **Detects fixation** on a 3x3 grid of screen sectors
 3. **Generates modified images** in the opposite sector (peripheral vision) — either from a curated prompt library or autonomously by the model itself in **semantic mode**
 4. **Captions each edit** via a separate text model so successive generations can build on (or diverge from) the prior cumulative state
@@ -27,13 +25,13 @@ The pipeline runs in three Docker services:
 
 ### Prerequisites
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- [Pupil Core](https://pupil-labs.com/products/core/) eye tracker (or simulation mode)
+- [Pupil Core](https://pupil-labs.com/products/core/) eye tracker with Pupil Capture (the pipeline can also be driven manually via the API, see below)
 - [OpenRouter API key](https://openrouter.ai) for AI image generation
 
 ### 1. Clone and configure
 ```bash
-git clone https://github.com/your-repo/ubicomp_capstone.git
-cd ubicomp_capstone
+git clone https://github.com/DSteinmann/change_blindness_art.git
+cd change_blindness_art
 
 # Create environment file
 cat > .env << EOF
@@ -73,10 +71,12 @@ docker compose up --build
 - **Backend API**: http://localhost:8000 (FastAPI docs at `/docs`)
 - **Generation API**: http://localhost:8001 (FastAPI docs at `/docs`)
 
-### 4. Calibrate gaze tracking
-1. Click **Start Calibration** in the sidebar
-2. Look at each of the 5 targets and click **Capture Sample**
-3. Your gaze cursor should now track accurately
+### 4. Set up gaze tracking in Pupil Capture
+1. Calibrate the headset with Pupil Capture's built-in screen-marker calibration
+2. Open the participant view full-screen; it draws four AprilTag markers (tag36h11, IDs 0–3) in the screen corners
+3. Enable the **Surface Tracker** plugin and add a surface named `screen` from those four markers (override with `PUPIL_SURFACE_NAME`)
+4. Enable the **Blink Detector** and **Pupil Remote** (port 50020) plugins
+5. Open http://localhost:8080?debug=true and check that the gaze cursor follows your eyes
 
 ---
 
@@ -91,7 +91,7 @@ The system supports several experimental paradigms:
 | **Blink-contingent** | Changes occur during natural blinks | Default behavior |
 | **Saccade-contingent** | Changes during eye movements | Modify `handleBlink()` in frontend |
 | **Forced choice** | Present original vs. changed, measure detection | Add response buttons |
-| **Threshold measurement** | Vary change magnitude, find detection limits | Use `change_magnitude` parameter |
+| **Threshold measurement** | Vary change magnitude, find detection limits | Set `SEMANTIC_SALIENCE` (`subtle` / `moderate` / `bold`) |
 
 ### Data Collection
 
@@ -231,14 +231,9 @@ Edit `generation/sector_prompts.json` to define what happens in each region:
 
 Each sector cycles through its prompts, creating evolving variations.
 
-### No Eye Tracker? Use Simulation
+### No Eye Tracker? Trigger Generations via the API
 
-```bash
-# Run with simulated gaze data
-scripts/start_stack.sh --mode simulate
-```
-
-Or trigger generations manually via API:
+There is no simulated gaze source; without Pupil Capture you can still exercise the generation pipeline directly:
 
 ```bash
 # Generate for specific sector
@@ -369,11 +364,17 @@ The frontend includes a debug mode for development and calibration. When disable
 ### Environment Setup
 ```bash
 conda env create -f environment.yml
-conda activate ubicomp312
-
-# For Aria glasses (macOS only)
-pip install /path/to/projectaria_client_sdk-*.whl
+conda activate change-blindness
+cp example.env .env   # then add your OPENROUTER_API_KEY
 ```
+
+### One-command startup
+```bash
+scripts/start_stack.sh                      # backend :8000, generation :8001, frontend :8080
+scripts/start_stack.sh --pupil-host 192.0.2.10 --pupil-port 50020   # Pupil Capture on another machine
+scripts/start_stack.sh --help               # all options
+```
+`start_stack.sh` loads `.env` from the repo root and writes sessions to `assets/sessions/`. Press Ctrl+C to stop everything.
 
 ### Manual Service Startup
 ```bash
@@ -386,26 +387,6 @@ cd generation && python server.py --host 0.0.0.0 --port 8001
 
 # Terminal 3: Frontend
 cd frontend/public && python -m http.server 8080
-```
-
-### Using Different Eye Trackers
-
-**Pupil Core:**
-```bash
-scripts/start_stack.sh --mode pupil \
-  --pupil-host 127.0.0.1 \
-  --pupil-port 50020
-```
-
-**Meta Aria:**
-```bash
-aria_device_manager list  # Get device UUID
-scripts/start_stack.sh --mode live --device-id <uuid>
-```
-
-**Simulation (no hardware):**
-```bash
-scripts/start_stack.sh --mode simulate
 ```
 
 ---
@@ -469,7 +450,7 @@ scripts/start_stack.sh --mode simulate
 | Many blinks "don't trigger swaps" | Confirm Pupil Capture's **Blink Detector** plugin is enabled. The new backend log line ends with `\| blinks received this session: N` — if N stays at 0, blinks aren't reaching the backend at all |
 | `metadata.blink_count` stays 0 but blinks log on backend | The backend → generation relay is failing. Check `docker compose logs backend \| grep "blink relay"`; in docker-compose this requires `GENERATION_INTERNAL_URL=http://generation:8001` |
 | Frontend errors `Fetch API cannot load http://generation:8001` | Browser cached an old `/config` response. Hard-refresh (`Cmd+Shift+R`) every open tab; the public URL must be `http://localhost:8001`, not the docker service name |
-| Calibration inaccurate | Recalibrate, ensure steady fixation on each target |
+| Calibration inaccurate | Recalibrate in Pupil Capture, then check the Surface Tracker still sees all four markers |
 | High latency | Lower `OPENROUTER_IMAGE_SIZE` to `1K` or `0.5K` (latter requires `gemini-3.1-flash-image-preview`) |
 | Generation hangs at first call after rebuild | Idle reset auto-rotates after `IDLE_RESET_SEC` (default 180 s); fire a fixation within that window, or POST to `/session/start` to refresh manually |
 | Captions show as `null` in metadata | Captioner round-trip failed (rate limit, network); the entry image is still saved. Check `docker compose logs generation \| grep caption_edit` |
@@ -483,8 +464,9 @@ If you use this system in your research, please cite:
 ```bibtex
 @software{gaze_contingent_change_blindness,
   title = {Gaze-Contingent Change Blindness System},
-  year = {2024},
-  url = {https://github.com/your-repo/ubicomp_capstone}
+  author = {Steinmann, Dominik},
+  year = {2026},
+  url = {https://github.com/DSteinmann/change_blindness_art}
 }
 ```
 
@@ -502,4 +484,4 @@ Contributions welcome! Areas of interest:
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+MIT License - See [LICENSE](LICENSE) for details. Third-party image credits are listed in [CREDITS.md](CREDITS.md).

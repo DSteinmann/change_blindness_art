@@ -90,7 +90,7 @@ export class GenerationController {
     if (!response.ok) throw new Error(await response.text());
 
     const promptUsed = response.headers.get("X-Prompt-Used");
-    if (promptUsed) console.log("Prompt:", promptUsed);
+    if (promptUsed) console.log("Prompt:", decodeURIComponent(promptUsed));
 
     const blob = await response.blob();
     const img = new Image();
