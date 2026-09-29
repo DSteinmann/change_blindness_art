@@ -1,9 +1,12 @@
 import { WS_URL } from "./config.js";
 
-export function openStream(handlers) {
+const MAX_RETRY_MS = 10000;
+
+export function openStream(handlers, retryMs = 1000) {
   const socket = new WebSocket(WS_URL);
   let pingInterval = null;
   socket.addEventListener("open", () => {
+    retryMs = 1000;
     pingInterval = setInterval(() => socket.readyState === 1 && socket.send("ping"), 10000);
   });
   socket.addEventListener("message", (event) => {
@@ -14,7 +17,7 @@ export function openStream(handlers) {
   });
   socket.addEventListener("close", () => {
     if (pingInterval !== null) clearInterval(pingInterval);
-    setTimeout(() => openStream(handlers), 1000);
+    setTimeout(() => openStream(handlers, Math.min(retryMs * 2, MAX_RETRY_MS)), retryMs);
   });
   socket.addEventListener("error", () => socket.close());
 }

@@ -7,9 +7,9 @@ import base64
 import io
 import os
 import time
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 from urllib.parse import quote
 
 import httpx
@@ -42,8 +42,8 @@ from sectors import (
 from semantic import (
     SemanticHistory,
     SemanticTurn,
+    _describe_sector,
     build_messages,
-    degenerate_caption,
     parse_response,
 )
 from session_manager import ReplayManager, SessionManager
@@ -52,8 +52,8 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 FAL_KEY = os.getenv("FAL_KEY", "")
 # "openrouter" (default) routes /generate to the OpenRouter image model — full
 # canvas regeneration with text-only localisation. "fal" routes to fal.ai
-# FLUX.1 Pro Fill, which takes image+mask+prompt; pixels outside the mask are
-# preserved at the protocol level (no rectangle artefacts, no scene drift).
+# GPT-Image-2 Edit, which takes image+mask+prompt so the edit is constrained to
+# the target sector at the protocol level.
 INPAINTING_BACKEND = os.getenv("INPAINTING_BACKEND", "openrouter").lower()
 PUPIL_SURFACE_NAME = os.getenv("PUPIL_SURFACE_NAME", "screen")
 PUPIL_CONFIDENCE_THRESHOLD = float(os.getenv("PUPIL_CONFIDENCE_THRESHOLD", "0.6"))
@@ -106,8 +106,6 @@ def _compose_fal_prompt(content_prompt: str, target_sector: str) -> str:
     The same string is recorded in metadata.json so post-hoc audits see exactly
     what was sent.
     """
-    # Local import to avoid an import cycle at module load.
-    from semantic import _describe_sector
     where = _describe_sector(target_sector)
     return (
         f"{content_prompt.rstrip('.')}. The change must appear ONLY in the "
@@ -162,7 +160,14 @@ async def _run_fal_inpaint(
     # against any residual edge drift.
     return composite_sector(init_image, edited, region, feather=4)
 
-app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await startup_event()
+    yield
+    await shutdown_event()
+
+
+app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -206,7 +211,6 @@ class GenerateRequest(BaseModel):
     target_row: Optional[int] = None
     target_col: Optional[int] = None
     grid_size: int = 3
-    strength: float = 0.75
     peripheral_size: float = 0.3
     # Optional: the session_id the client thinks is active. If supplied and
     # the gen service has rotated since, we reject with 410 to prevent stale
@@ -214,7 +218,6 @@ class GenerateRequest(BaseModel):
     session_id: Optional[str] = None
 
 
-@app.on_event("startup")
 async def startup_event() -> None:
     global _backend_client, GENERATION_MODE, INPAINTING_BACKEND, _idle_task, _idle_lock
     _backend_client = httpx.AsyncClient()
@@ -236,7 +239,6 @@ async def startup_event() -> None:
     _idle_task = asyncio.create_task(_idle_watcher())
 
 
-@app.on_event("shutdown")
 async def shutdown_event() -> None:
     if _idle_task is not None:
         _idle_task.cancel()
@@ -504,9 +506,6 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         focus_sector = "unknown"
         print(f"Legacy: focus at ({request.focus_x:.2f}, {request.focus_y:.2f})")
 
-    # Mask is unused by OpenRouter but kept for any future local backend.
-    _ = create_mask(init_image.size, region)
-
     # Snap the input's aspect to the closest model-supported ratio so the
     # model's output keeps the same proportions; otherwise sector compositing
     # maps the wrong pixels.
@@ -517,6 +516,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
     semantic_success = False
     fal_planned_prompt: str | None = None
     generated_image = init_image
+    generator = "none"  # which model produced the saved image; recorded in metadata
     pending_caption_args: dict | None = None
 
     if INPAINTING_BACKEND == "fal" and FAL_KEY:
@@ -533,7 +533,6 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         planner_image = shrink_for_api(init_image, max_edge=CAPTION_INPUT_MAX_EDGE)
         # The model needs human-readable sector names ("BR" means nothing to it)
         # and the focus sector as context for the peripheral-vision framing.
-        from semantic import _describe_sector
         planned = await plan_edit(
             image_b64=planner_image,
             target_sector=_describe_sector(target),
@@ -554,6 +553,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         try:
             generated_image = await _run_fal_inpaint(init_image, region, full_prompt)
             semantic_success = True  # treat as a successful generation for metadata
+            generator = "fal"
             fal_planned_prompt = full_prompt
             # Schedule an async captioner so observer/feed get a description.
             edit_b64 = shrink_for_api(generated_image, max_edge=CAPTION_INPUT_MAX_EDGE)
@@ -589,7 +589,6 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             )
         except Exception as first_err:
             print(f"semantic first attempt failed: {first_err} - retrying with terser prompt")
-            from semantic import _describe_sector
             terser = (
                 f"Add one small, naturalistic element to the {_describe_sector(target)} "
                 "area of the image. Keep all prior additions and the rest of the "
@@ -612,6 +611,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
             if image_out is not None:
                 generated_image = image_out
                 semantic_success = True
+                generator = "openrouter-semantic"
                 prior_captions_lower = [c.lower() for c in semantic_history.captions(session_id)]
                 # Replay the prior edit as an assistant turn next time, keeping
                 # the cumulative-edit chain visible to the model.
@@ -647,6 +647,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
                     init_image, prompt, region, OPENROUTER_API_KEY,
                     aspect_ratio=aspect_ratio,
                 )
+                generator = "openrouter"
             except Exception as api_err:
                 print(f"OpenRouter API failed: {api_err}")
                 generated_image = init_image
@@ -670,7 +671,7 @@ async def _generate_impl(request: GenerateRequest, background: BackgroundTasks) 
         entry = session_manager.save_generation(
             generated_image, target, recorded_prompt, focus_sector,
             latency_ms=latency_ms, caption=caption,
-            duplicate_caption=duplicate_caption,
+            duplicate_caption=duplicate_caption, generator=generator,
         )
         await _notify_backend(entry)
         if pending_caption_args is not None:

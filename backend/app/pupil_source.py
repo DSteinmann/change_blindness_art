@@ -10,10 +10,16 @@ from typing import Awaitable, Callable, Optional
 import msgpack  # type: ignore
 import zmq
 
-from .blink_utils import clamp
 from .config import Settings
 
 logger = logging.getLogger(__name__)
+
+PUPIL_REMOTE_TIMEOUT_MS = 2000
+PUPIL_REMOTE_RETRY_SEC = 2.0
+
+
+def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
+    return max(lower, min(upper, value))
 
 
 def _is_binocular(gaze_pt: dict) -> bool:
@@ -118,7 +124,7 @@ class PupilSource:
         self._thread = threading.Thread(target=self._run, name="pupil-core-source", daemon=True)
         self._loop: asyncio.AbstractEventLoop | None = None
         # Name of the surface defined in Pupil Capture's Surface Tracker
-        self.surface_name = settings.pupil_surface_name if hasattr(settings, 'pupil_surface_name') else "screen"
+        self.surface_name = settings.pupil_surface_name
 
     async def start(self):
         logger.info("Starting Pupil Core source...")
@@ -143,23 +149,35 @@ class PupilSource:
         self._stop_event.set()
         self._thread.join(timeout=5)
 
+    def _request_sub_port(self, ctx: zmq.Context) -> Optional[str]:
+        """Ask Pupil Remote for its SUB port, retrying until Pupil Capture is up
+        so the backend can be started before it. Returns None if stopped first."""
+        remote_address = f"tcp://{self._settings.pupil_host}:{self._settings.pupil_remote_port}"
+        logger.info(f"Connecting to Pupil Remote at {remote_address}")
+        while not self._stop_event.is_set():
+            request_socket = ctx.socket(zmq.REQ)
+            request_socket.setsockopt(zmq.RCVTIMEO, PUPIL_REMOTE_TIMEOUT_MS)
+            request_socket.setsockopt(zmq.LINGER, 0)
+            request_socket.connect(remote_address)
+            try:
+                request_socket.send_string("SUB_PORT")
+                return request_socket.recv_string()
+            except zmq.Again:
+                logger.warning(
+                    f"Pupil Remote not reachable at {remote_address}. Is Pupil Capture "
+                    f"running with the Pupil Remote plugin enabled? Retrying..."
+                )
+            finally:
+                request_socket.close(0)
+            self._stop_event.wait(PUPIL_REMOTE_RETRY_SEC)
+        return None
+
     def _run(self) -> None:
         ctx = zmq.Context.instance()
-        request_socket = ctx.socket(zmq.REQ)
-        remote_address = f"tcp://{self._settings.pupil_host}:{self._settings.pupil_remote_port}"
-        request_socket.connect(remote_address)
-        logger.info(f"Connecting to Pupil Remote at {remote_address}")
-
-        try:
-            request_socket.send_string("SUB_PORT")
-            sub_port = request_socket.recv_string()
-            logger.info(f"Received Pupil SUB_PORT={sub_port}")
-        except Exception as exc:
-            request_socket.close(0)
-            raise RuntimeError(
-                "Unable to reach the Pupil Remote plugin. Ensure Pupil Capture/Core is running "
-                "with Remote enabled and that the host/port are correct."
-            ) from exc
+        sub_port = self._request_sub_port(ctx)
+        if sub_port is None:
+            return
+        logger.info(f"Received Pupil SUB_PORT={sub_port}")
 
         sub_address = f"tcp://{self._settings.pupil_host}:{sub_port}"
         
@@ -206,9 +224,10 @@ class PupilSource:
                     
                 if len(frames) >= 2:
                     surface_obj = msgpack.loads(frames[1], raw=False)
-                    if isinstance(surface_obj, dict):
-                        # Log what we received to understand the data structure
-                        surface_name = surface_obj.get("name", "unknown")
+                    # Ignore other surfaces defined in Surface Tracker; their gaze
+                    # would otherwise be mixed into the screen's.
+                    if isinstance(surface_obj, dict) and surface_obj.get("name") == self.surface_name:
+                        surface_name = self.surface_name
                         if surface_samples < 5:
                             logger.info(f"Surface message: name='{surface_name}', keys={list(surface_obj.keys())}")
 
@@ -295,7 +314,10 @@ class PupilSource:
                 if surface_samples > 0:
                     source = f"surface '{self.surface_name}' ({surface_samples} pts)"
                 else:
-                    source = "no surface data - check Surface Tracker setup!"
+                    source = (
+                        f"no gaze on surface '{self.surface_name}' - check Surface Tracker "
+                        f"setup and that the surface name matches PUPIL_SURFACE_NAME!"
+                    )
                 logger.info(
                     f"Forwarded {samples_forwarded} gaze samples - source: {source} "
                     f"| blinks received this session: {blinks_received}"
@@ -308,5 +330,3 @@ class PupilSource:
             surface_socket.close(0)
         with suppress(Exception):
             blink_socket.close(0)
-        with suppress(Exception):
-            request_socket.close(0)

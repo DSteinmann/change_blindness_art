@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -12,7 +12,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .patch_manager import PatchManager
 from .pupil_source import PupilSource
 from .stream import StreamHub
 
@@ -20,7 +19,21 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logger = logging.getLogger("blinkpatch-backend")
 
 settings = get_settings()
-app = FastAPI(title="BlinkPatch Backend", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    global _relay_client
+    logger.info("Starting backend...")
+    _relay_client = httpx.AsyncClient()
+    await pupil_source.start()
+    yield
+    logger.info("Stopping backend")
+    await pupil_source.stop()
+    await _relay_client.aclose()
+
+
+app = FastAPI(title="BlinkPatch Backend", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -31,9 +44,7 @@ app.add_middleware(
 app.mount("/assets", StaticFiles(directory=str(settings.patch_dir)), name="assets")
 app.mount("/sessions", StaticFiles(directory=str(settings.sessions_dir)), name="sessions")
 
-stream_hub = StreamHub(history_size=settings.telemetry_history)
-patch_manager = PatchManager(settings.patch_dir)
-patch_usage_log: list[dict[str, Any]] = []
+stream_hub = StreamHub()
 
 _relay_client: httpx.AsyncClient | None = None
 
@@ -64,23 +75,6 @@ async def _relay_blink_onset(state: str) -> None:
 pupil_source = PupilSource(settings, stream_hub.broadcast, on_blink_onset=_relay_blink_onset)
 
 
-@app.on_event("startup")
-async def _startup() -> None:
-    global _relay_client
-    logger.info("Starting backend...")
-    _relay_client = httpx.AsyncClient()
-    await patch_manager.load()
-    await pupil_source.start()
-
-
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    logger.info("Stopping backend")
-    await pupil_source.stop()
-    if _relay_client is not None:
-        await _relay_client.aclose()
-
-
 @app.get("/config")
 async def runtime_config() -> dict[str, Any]:
     """Shared runtime spec consumed by the frontend on load."""
@@ -108,21 +102,6 @@ async def latest_sample() -> JSONResponse:
     if not stream_hub.latest_sample:
         raise HTTPException(status_code=404, detail="No telemetry yet")
     return JSONResponse(stream_hub.latest_sample)
-
-
-@app.get("/patch/next")
-async def get_next_patch(stimulus: str | None = None) -> dict[str, Any]:
-    return await patch_manager.next_patch(stimulus)
-
-
-@app.post("/patch/use")
-async def register_patch_use(event: dict[str, Any]) -> dict[str, Any]:
-    record = {
-        "ts": datetime.now(tz=timezone.utc).isoformat(),
-        "payload": event,
-    }
-    patch_usage_log.append(record)
-    return record
 
 
 @app.post("/events/generation")

@@ -7,7 +7,6 @@ visually rather than from text descriptions alone.
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Tuple
 
@@ -243,8 +242,3 @@ def parse_response(message: dict) -> Tuple[Image.Image | None, str | None]:
     image = _extract_image(message)
     caption = _extract_caption(message.get("content", ""))
     return image, caption
-
-
-def degenerate_caption(index: int, sector_name: str) -> str:
-    """Fallback caption when the model returned an image but no CAPTION line."""
-    return f"edit {index} in {sector_name} at {time.strftime('%H:%M:%S')}"

@@ -94,11 +94,16 @@ export class GenerationController {
 
     const blob = await response.blob();
     const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = URL.createObjectURL(blob);
-    });
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = objectUrl;
+      });
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
 
     const canvas = document.createElement("canvas");
     canvas.width = img.naturalWidth;

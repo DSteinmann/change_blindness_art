@@ -1,16 +1,18 @@
-# Blink Mirror Frontend
+# Frontend
 
-A minimal static UI that subscribes to the backend WebSocket, mirrors patches to the opposite side of wherever the user is looking, and swaps in a new asset only when the wearer blinks.
+Static ES-module UI with three pages:
 
-Rendering happens on a single `<canvas>` element for speed: each patch id is hashed into a simple geometric primitive and color so swaps remain lightweight while still logging patch metadata in the backend.
+- `index.html`: participant view. Shows the base image with AprilTag markers in the corners, tracks fixations on the sector grid, requests an edit for the opposite sector, and swaps the new image in on the next blink.
+- `observer.html`: operator tablet with the gaze cursor, counters, edit history, and a **New Participant** button.
+- `feed.html`: full-screen reveal of each new generation.
 
-Use the sidebar controls to run the five-point calibration routine (corners + center). Each capture records the current gaze sample and solves an affine transform so the rendered cursor/patches match the corrected viewpoint. Calibration metadata lives in `localStorage` and can be reset at any time.
+Runtime settings (grid size, fixation duration, smoothing, generation URL) are fetched from the backend's `/config` endpoint.
 
 ## Local Development
 ```bash
 cd frontend/public
 python -m http.server 8080
 ```
-Then open http://localhost:8080 in a browser (Chrome recommended).
+Then open http://localhost:8080 (add `?debug=true` or press `D` for the gaze cursor and stats).
 
-Set `window.API_ROOT` in the devtools console if the backend is not running on `http://localhost:8000`.
+Set `window.API_ROOT` before the modules load if the backend is not running on `http://localhost:8000`.

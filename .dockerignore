@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+.context
+.conductor
+.claude
+**/__pycache__
+**/.pytest_cache
+assets/sessions/*
+!assets/sessions/.gitkeep
+generation/sessions
+assets/patches/generated/pexels-*.png

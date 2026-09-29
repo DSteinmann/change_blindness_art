@@ -79,7 +79,7 @@ async def _post_chat(payload: dict, api_key: str, client: httpx.AsyncClient) -> 
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/ubicomp-capstone",
+            "HTTP-Referer": "https://github.com/DSteinmann/change_blindness_art",
         },
         json=payload,
     )

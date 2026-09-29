@@ -138,7 +138,9 @@ assets/sessions/session_1704567890/
       "caption": "a small ladybug landed on the leaf",  // from the captioner; null if it failed
       "duplicate_caption": false,         // set true if caption overlaps a prior one
       "timestamp": 1704567892.456,
-      "latency_ms": 26431.0               // measured wall time of /generate
+      "latency_ms": 26431.0,              // measured wall time of /generate
+      "generator": "openrouter-semantic"  // model path that produced the image:
+                                          // "fal" | "openrouter-semantic" | "openrouter" | "none" (unchanged)
     }
   ]
 }
@@ -164,6 +166,21 @@ Selected by the `GENERATION_MODE` env var; defaults to `cycling` for safe rollou
 - A `BackgroundTasks` queue runs the captioner *after* the response is sent, so per-swap latency stays at the image-gen cost (~22–50 s for `gemini-3-pro-image-preview` at 2K).
 - The frontend's `BLINK_GRACE_MS = 250` lets a swap fire immediately if generation completes while you're mid-blink, instead of waiting for the next onset.
 - A 250 ms gaze-staleness window absorbs natural blinks without resetting the fixation timer.
+
+### Models and Reproducibility
+
+The generation service calls hosted models, which providers update or retire over time. Record the model IDs and the date range of your study alongside your data; each session's `metadata.json` also snapshots the image model in `runtime.image_model`.
+
+| Role | Env var | Default |
+|------|---------|---------|
+| Image edit (OpenRouter backend) | `OPENROUTER_IMAGE_MODEL` | `google/gemini-3-pro-image-preview` |
+| Edit planner (fal backend) | `OPENROUTER_PLANNER_MODEL` | `google/gemini-2.5-flash` |
+| Captioner | `OPENROUTER_CAPTION_MODEL` | `google/gemini-2.5-flash` |
+| Masked image edit (fal backend) | `FAL_EDIT_MODEL` | `openai/gpt-image-2/edit` |
+
+If the fal backend fails for a request, the service falls back to an unmasked OpenRouter edit; such entries are recorded with `"generator": "openrouter"`, so filter on that field if your analysis requires the masked condition.
+
+Python dependencies are pinned in `backend/requirements.txt` and `generation/requirements.txt`; the Docker images use Python 3.12.
 
 ### Replay Previous Sessions
 
@@ -430,8 +447,6 @@ cd frontend/public && python -m http.server 8080
 | `GET /config` | Runtime config consumed by the frontend on load (grid size, fixation duration, smoothing, gaze stale window, browser-facing generation URL) |
 | `GET /telemetry/latest` | Latest gaze sample |
 | `GET /healthz` | Backend liveness |
-| `GET /patch/next` | Get next patch asset |
-| `POST /patch/use` | Log patch placement |
 | `POST /events/generation` | Generation service relays new image events to all WS clients |
 | `POST /events/swap` | Frontend relays swap events (called when an image actually swaps in) |
 | `POST /events/session_started` | Generation service relays participant rollovers |

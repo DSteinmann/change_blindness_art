@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Gaze-Contingent Change Blindness System"
+authors:
+  - family-names: Steinmann
+    given-names: Dominik
+repository-code: "https://github.com/DSteinmann/change_blindness_art"
+license: MIT
+date-released: 2026-09-29

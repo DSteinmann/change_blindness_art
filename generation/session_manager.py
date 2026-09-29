@@ -7,8 +7,6 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, List
 from PIL import Image
-import io
-import base64
 
 
 class SessionManager:
@@ -113,6 +111,7 @@ class SessionManager:
         latency_ms: Optional[float] = None,
         caption: Optional[str] = None,
         duplicate_caption: bool = False,
+        generator: Optional[str] = None,
     ) -> Dict:
         """Save a generated image and its metadata."""
         if not self.current_session_dir:
@@ -131,6 +130,7 @@ class SessionManager:
             "caption": caption,
             "timestamp": time.time(),
             "latency_ms": latency_ms,
+            "generator": generator,
         }
         if duplicate_caption:
             entry["duplicate_caption"] = True

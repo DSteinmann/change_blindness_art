@@ -1,4 +1,4 @@
-"""Tests for the fal.ai instruction-based edit client (FLUX.1 Kontext)."""
+"""Tests for the fal.ai instruction-based edit client (GPT-Image-2 Edit)."""
 from __future__ import annotations
 
 import base64

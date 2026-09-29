@@ -40,7 +40,8 @@ node_modules/
 
 rust_native/*
 # Runtime session output (per-run experimental data, regenerates each run)
-assets/sessions/
+assets/sessions/*
+!assets/sessions/.gitkeep
 
 # Local generation-service sessions when run outside Docker
 generation/sessions/

@@ -7,7 +7,6 @@ from semantic import (
     SemanticHistory,
     SemanticTurn,
     build_messages,
-    degenerate_caption,
     parse_response,
 )
 
@@ -231,12 +230,6 @@ def test_parse_response_handles_list_content_with_caption(fake_openrouter_respon
     message["content"] = [{"type": "text", "text": "CAPTION: the fern uncurled"}]
     image, caption = parse_response(message)
     assert caption == "the fern uncurled"
-
-
-def test_degenerate_caption_is_non_empty():
-    c = degenerate_caption(index=4, sector_name="TL")
-    assert "TL" in c
-    assert "4" in c
 
 
 def test_shrink_for_api_caps_max_edge_and_emits_png():
