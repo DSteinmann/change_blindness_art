@@ -167,7 +167,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await shutdown_event()
 
 
-app = FastAPI(title="Generation Server (OpenRouter)", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="BlinkArt Generation Service", version="0.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

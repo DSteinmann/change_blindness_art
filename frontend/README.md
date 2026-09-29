@@ -1,4 +1,4 @@
-# Frontend
+# BlinkArt Frontend
 
 Static ES-module UI with three pages:
 

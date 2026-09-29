@@ -1,4 +1,4 @@
-name: change-blindness
+name: blinkart
 channels:
   - conda-forge
 dependencies:

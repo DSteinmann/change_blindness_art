@@ -1,6 +1,10 @@
-# Gaze-Contingent Change Blindness System
+# BlinkArt
 
-A real-time eye-tracking platform for studying **change blindness** and **peripheral perception**. The system tracks where you look, generates AI-modified images in your peripheral vision, and swaps them in during blinks—when your visual system is naturally suppressed.
+**Using Change Blindness for AI-Generated Image Modifications in Artworks**
+
+BlinkArt is a real-time eye-tracking system for studying **change blindness** and **peripheral perception**. It tracks where you look, generates AI-modified images in your peripheral vision, and swaps them in during blinks—when your visual system is naturally suppressed. It can author changes autonomously, producing self-documented visual narratives without hand-crafted prompts.
+
+📄 Paper: [BlinkArt: Using Change Blindness For AI-Generated Image Modifications in Artworks](https://doi.org/10.1145/3798063.3837172), UbiComp Companion '26 (see [Citation](#citation)).
 
 Built for **researchers** studying visual perception and **artists** exploring gaze-reactive installations.
 
@@ -381,7 +385,7 @@ The frontend includes a debug mode for development and calibration. When disable
 ### Environment Setup
 ```bash
 conda env create -f environment.yml
-conda activate change-blindness
+conda activate blinkart
 cp example.env .env   # then add your OPENROUTER_API_KEY
 ```
 
@@ -474,14 +478,17 @@ cd frontend/public && python -m http.server 8080
 
 ## Citation
 
-If you use this system in your research, please cite:
+If you use BlinkArt in your research, please cite the paper:
 
 ```bibtex
-@software{gaze_contingent_change_blindness,
-  title = {Gaze-Contingent Change Blindness System},
-  author = {Steinmann, Dominik},
-  year = {2026},
-  url = {https://github.com/DSteinmann/change_blindness_art}
+@inproceedings{steinmann2026blinkart,
+  title     = {BlinkArt: Using Change Blindness For AI-Generated Image Modifications in Artworks},
+  author    = {Steinmann, Dominik and Strecker-Bischoff, Jannis and Bekta{\c{s}}, Kenan and Williams, Jessica Laraine and Mayer, Simon},
+  booktitle = {Companion of the 2026 ACM International Joint Conference on Pervasive and Ubiquitous Computing (UbiComp Companion '26)},
+  year      = {2026},
+  address   = {Shanghai, China},
+  publisher = {ACM},
+  doi       = {10.1145/3798063.3837172}
 }
 ```
 

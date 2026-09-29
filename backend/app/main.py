@@ -16,7 +16,7 @@ from .pupil_source import PupilSource
 from .stream import StreamHub
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("blinkpatch-backend")
+logger = logging.getLogger("blinkart-backend")
 
 settings = get_settings()
 
@@ -33,7 +33,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await _relay_client.aclose()
 
 
-app = FastAPI(title="BlinkPatch Backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="BlinkArt Backend", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

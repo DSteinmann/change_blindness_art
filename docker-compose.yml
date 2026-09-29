@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
-    container_name: blinkpatch-backend
+    container_name: blinkart-backend
     environment:
       - PATCH_ASSETS_DIR=/app/assets/patches
       # The following are needed for the backend to connect to Pupil Core
@@ -26,13 +26,13 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - blinkpatch-net
+      - blinkart-net
 
   generation:
     build:
       context: .
       dockerfile: docker/generation.Dockerfile
-    container_name: blinkpatch-generation
+    container_name: blinkart-generation
     env_file:
       - .env
     environment:
@@ -43,20 +43,20 @@ services:
     ports:
       - "8001:8001"
     networks:
-      - blinkpatch-net
+      - blinkart-net
 
   frontend:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
-    container_name: blinkpatch-frontend
+    container_name: blinkart-frontend
     depends_on:
       - backend
     ports:
       - "8080:8080"
     networks:
-      - blinkpatch-net
+      - blinkart-net
 
 networks:
-  blinkpatch-net:
+  blinkart-net:
     driver: bridge
