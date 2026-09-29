@@ -1,11 +1,14 @@
-version: "3.9"
-
 services:
   backend:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
     container_name: blinkart-backend
+    # Same .env as the generation service, so PUPIL_SURFACE_NAME, fixation
+    # and gaze settings reach the backend too.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PATCH_ASSETS_DIR=/app/assets/patches
       # The following are needed for the backend to connect to Pupil Core
@@ -34,7 +37,8 @@ services:
       dockerfile: docker/generation.Dockerfile
     container_name: blinkart-generation
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
     volumes:

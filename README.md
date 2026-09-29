@@ -60,6 +60,8 @@ IDLE_RESET_SEC=180
 EOF
 ```
 
+`.env` is optional: without it the whole stack still runs, which is handy for testing the eye-tracking setup without spending API credit, but the generation service returns the image unchanged, so no swaps are visible.
+
 ### 2. Start the system
 ```bash
 # Start Pupil Capture with Pupil Remote plugin enabled (port 50020)
@@ -69,7 +71,7 @@ docker compose up --build
 ```
 
 ### 3. Open the interface
-- **Participant view**: http://localhost:8080 (add `?debug=true` to see the gaze cursor and stats)
+- **Participant view**: http://localhost:8080 (add `?debug=true` to see the gaze cursor)
 - **Observer tablet**: http://localhost:8080/observer.html — gaze cursor, sector grid, generation/swap counters, "New Participant" button, edit history
 - **Live generation feed**: http://localhost:8080/feed.html — full-screen reveal of each new generation
 - **Backend API**: http://localhost:8000 (FastAPI docs at `/docs`)
@@ -88,14 +90,14 @@ docker compose up --build
 
 ### Study Design
 
-The system supports several experimental paradigms:
+The blink-contingent paradigm is implemented; the others are starting points that need code changes:
 
-| Paradigm | Description | Configuration |
-|----------|-------------|---------------|
-| **Blink-contingent** | Changes occur during natural blinks | Default behavior |
-| **Saccade-contingent** | Changes during eye movements | Modify `handleBlink()` in frontend |
-| **Forced choice** | Present original vs. changed, measure detection | Add response buttons |
-| **Threshold measurement** | Vary change magnitude, find detection limits | Set `SEMANTIC_SALIENCE` (`subtle` / `moderate` / `bold`) |
+| Paradigm | Description | Status / how |
+|----------|-------------|--------------|
+| **Blink-contingent** | Changes occur during natural blinks | Implemented (default) |
+| **Saccade-contingent** | Changes during eye movements | Not implemented; trigger the swap from saccades instead of `handleBlink()` in the frontend |
+| **Forced choice** | Present original vs. changed, measure detection | Not implemented; add response UI |
+| **Threshold measurement** | Vary change magnitude, find detection limits | Coarse control via `SEMANTIC_SALIENCE` (`subtle` / `moderate` / `bold`); applies to semantic mode and the fal planner, not cycling mode |
 
 ### Data Collection
 
@@ -119,6 +121,8 @@ assets/sessions/session_1704567890/
   "runtime": {                            // snapshot of config at session start
     "image_model": "google/gemini-3-pro-image-preview",
     "mode": "semantic",                   // "semantic" or "cycling"
+    "salience": "subtle",                 // SEMANTIC_SALIENCE
+    "inpainting_backend": "openrouter",   // "openrouter" or "fal"
     "pupil_surface_name": "screen",
     "pupil_confidence_threshold": 0.6,
     "grid_size": 3
@@ -137,10 +141,11 @@ assets/sessions/session_1704567890/
       "index": 0,
       "filename": "0000_TR.png",
       "target_sector": "TR",              // sector the model was asked to modify
-      "focus_sector": "BL",               // sector the participant was fixating
+      "focus_sector": "BL",               // mirror of target_sector: the fixated sector, except that
+                                          // fixations on MC are recorded as a corner
       "prompt": "semantic auto-edit",     // or the cycling prompt in cycling mode
       "caption": "a small ladybug landed on the leaf",  // from the captioner; null if it failed
-      "duplicate_caption": false,         // set true if caption overlaps a prior one
+      "duplicate_caption": true,          // only present when the caption overlaps a prior one
       "timestamp": 1704567892.456,
       "latency_ms": 26431.0,              // measured wall time of /generate
       "generator": "openrouter-semantic"  // model path that produced the image:
@@ -152,15 +157,20 @@ assets/sessions/session_1704567890/
 
 ### Generation Modes
 
-Selected by the `GENERATION_MODE` env var; defaults to `cycling` for safe rollout.
+Selected by the `GENERATION_MODE` env var; defaults to `cycling` for safe rollout. If `INPAINTING_BACKEND=fal` and `FAL_KEY` is set, the fal path below is used instead and `GENERATION_MODE` is ignored.
 
 **`semantic` (recommended)**
-- Each `/generate` call sends the original scene plus the **2 most recent generated images** to the OpenRouter image model in a single user turn. The model is told to add ONE new element to the requested sector and keep everything else unchanged.
-- After the response lands, a **background captioner** call (`OPENROUTER_CAPTION_MODEL`, default `gemini-2.5-flash`) compares the *prior cumulative state* with the new generation and writes a one-sentence description of the latest delta. The caption is appended to the in-memory edit history, so the next `/generate` call's "diverge from prior additions" instruction has accurate signal.
+- Each `/generate` call sends the original scene plus the **2 most recent generated images** to the OpenRouter image model in a single user turn. The model is told to make ONE deliberate change in the requested sector (add, transform/replace, or remove something) and keep everything else unchanged.
+- After the response lands, a **background captioner** call (`OPENROUTER_CAPTION_MODEL`, default `gemini-2.5-flash`) compares the *prior cumulative state* with the new generation and writes a one-sentence description of the latest delta. The caption labels that image when it is sent as context in later calls, and is appended to `metadata.json[edit_history]`.
 - No `sector_prompts.json` required; the file becomes optional. Each session's edit sequence is unique.
 
 **`cycling`**
 - Per-sector prompts are read from `generation/sector_prompts.json` (or fallback `generation/prompts.txt`); each sector advances independently. Useful when you want a tightly curated set of modifications across all participants.
+
+**fal backend (`INPAINTING_BACKEND=fal`)**
+- A planner model (`OPENROUTER_PLANNER_MODEL`) looks at the current image and the session's `edit_history` and proposes a scene-appropriate edit that doesn't repeat earlier ones; the fal edit model (`FAL_EDIT_MODEL`) then applies it with a mask of the target sector, so the change cannot land outside that sector. Requires both `FAL_KEY` and `OPENROUTER_API_KEY`.
+
+**Per-participant lifecycle**
 
 **Per-participant lifecycle**
 - The observer tablet has a **New Participant** button (`POST /session/start` to the generation service) that rotates the session, clears semantic history, and broadcasts a `session_started` WebSocket event so observer + feed pages reset.
@@ -205,12 +215,12 @@ For change blindness studies, timing is critical:
 
 | Stage | Typical Latency |
 |-------|-----------------|
-| Eye tracker → Backend | 15-30 ms |
-| Backend → Frontend (WebSocket) | 5-20 ms |
-| AI Generation | 2-5 seconds |
-| Image swap on blink | 10-40 ms |
+| Eye tracker → Backend | 15-30 ms (estimate) |
+| Backend → Frontend (WebSocket) | 5-20 ms (estimate) |
+| AI Generation | ~20-50 s for `gemini-3-pro-image-preview` at 2K (measured per image in `latency_ms`) |
+| Image swap on blink | 10-40 ms (estimate) |
 
-**Recommendation**: Pre-generate images for each sector during fixation, so swaps are instant when blinks occur. The system already does this—generation happens during fixation, swap happens on blink.
+Because generation takes far longer than a blink, it starts as soon as a fixation is detected and the finished image waits for the next blink, so swap timing does not depend on model latency. Only one generation runs at a time; further requests are rejected with HTTP 409 until it completes.
 
 ---
 
@@ -261,7 +271,7 @@ There is no simulated gaze source; without Pupil Capture you can still exercise 
 curl -X POST http://localhost:8001/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "image_base64": "'$(base64 -i your-image.png)'",
+    "image_base64": "data:image/png;base64,'$(base64 < your-image.png | tr -d '\n')'",
     "focus_x": 0.2,
     "focus_y": 0.2,
     "target_row": 2,
@@ -319,7 +329,7 @@ Update `DEFAULT_BASE_IMAGE` in `frontend/public/main.js` to point to your image.
 
 ### Fixation Parameters
 
-The 3×3 grid, fixation duration, smoothing factor, gaze-staleness window, and the browser-facing generation URL are served by the backend at `GET /config` and consumed by the frontend on load. Override any of them via the env block above (`GRID_SIZE`, `FIXATION_DURATION_MS`, `GAZE_SMOOTHING_FACTOR`, `GAZE_STALE_MS`, `GENERATION_API`). No frontend rebuild required — restart the backend container.
+The 3×3 grid, fixation duration, smoothing factor, gaze-staleness window, and the browser-facing generation URL are served by the backend at `GET /config` and consumed by the frontend on load. Override any of them in `.env` (`FIXATION_DURATION_MS`, `GAZE_SMOOTHING_FACTOR`, `GAZE_STALE_MS`, `GENERATION_API`). No frontend rebuild required — restart the backend container. `GRID_SIZE` is also configurable, but sector names (`TL` … `BR`) assume a 3×3 grid, so other sizes are unsupported.
 
 ### Debug Mode
 
@@ -332,7 +342,6 @@ The frontend includes a debug mode for development and calibration. When disable
 | Element | Debug OFF (default) | Debug ON |
 |---------|---------------------|----------|
 | Gaze cursor | Hidden | Visible |
-| Sidebar stats | Hidden | Visible |
 
 **Note**: The center sector (MC) maps to a random corner when fixated, ensuring changes always occur in peripheral vision.
 
@@ -398,16 +407,20 @@ scripts/start_stack.sh --help               # all options
 `start_stack.sh` loads `.env` from the repo root and writes sessions to `assets/sessions/`. Press Ctrl+C to stop everything.
 
 ### Manual Service Startup
+Equivalent to `start_stack.sh`, one service per terminal, run from the repo root:
 ```bash
+# Every terminal: load .env and point both services at the shared assets
+set -a; [ -f .env ] && source .env; set +a
+export PATCH_ASSETS_DIR="$PWD/assets/patches" SESSIONS_ASSETS_DIR="$PWD/assets/sessions"
+
 # Terminal 1: Backend
-cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000
+(cd backend && uvicorn app.main:app --port 8000)
 
 # Terminal 2: Generation
-export OPENROUTER_API_KEY=sk-or-v1-xxx
-cd generation && python server.py --host 0.0.0.0 --port 8001
+BACKEND_URL=http://127.0.0.1:8000 python generation/server.py --port 8001
 
 # Terminal 3: Frontend
-cd frontend/public && python -m http.server 8080
+(cd frontend/public && python -m http.server 8080)
 ```
 
 ---
@@ -416,12 +429,13 @@ cd frontend/public && python -m http.server 8080
 
 ### Generation Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
+| Endpoint | Description |
+|----------|-------------|
 | `POST /generate` | Generate modified image for sector |
-| `GET /health` | API status, mode, and current model |
-| `GET /prompts` | List current cycling prompts and indices |
+| `GET /health` | Whether an API key is configured, the image model, and prompt counts |
+| `GET /prompts` | List the `prompts.txt` fallback prompts and the global prompt index |
 | `POST /reset` | Reset cycling-prompt indices |
+| `GET /session/current` | Active session id (the frontend stamps it on `/generate` requests) |
 | `POST /session/start` | Rotate to a new participant session (optional `participant_id`); clears semantic history |
 | `POST /session/blink` | Increment blink counter for the active session (called by backend on each onset) |
 | `POST /session/calibration` | Record calibration metadata for the active session |
@@ -445,16 +459,16 @@ cd frontend/public && python -m http.server 8080
 
 ### Backend Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
+| Endpoint | Description |
+|----------|-------------|
 | `WS /ws/stream` | Real-time gaze, blink, generation, swap, and session_started events |
 | `GET /config` | Runtime config consumed by the frontend on load (grid size, fixation duration, smoothing, gaze stale window, browser-facing generation URL) |
-| `GET /telemetry/latest` | Latest gaze sample |
+| `GET /telemetry/latest` | Last event broadcast over the WebSocket (gaze sample, blink, generation, …) |
 | `GET /healthz` | Backend liveness |
 | `POST /events/generation` | Generation service relays new image events to all WS clients |
 | `POST /events/swap` | Frontend relays swap events (called when an image actually swaps in) |
 | `POST /events/session_started` | Generation service relays participant rollovers |
-| Static `/assets/...` | Serves `assets/patches/` (base images and markers) |
+| Static `/assets/...` | Serves `assets/patches/` (base images); the AprilTag markers are served by the frontend |
 | Static `/sessions/...` | Serves `assets/sessions/` (per-session generated PNGs) |
 
 ---
@@ -464,8 +478,9 @@ cd frontend/public && python -m http.server 8080
 | Issue | Solution |
 |-------|----------|
 | "No API key set" | Create `.env` with `OPENROUTER_API_KEY`; in semantic mode the service falls back to `cycling` if the key is missing |
-| "Model did not return image" | Verify the chosen image model supports image output via OpenRouter; try `google/gemini-3.1-flash-image-preview` or `google/gemini-3-pro-image-preview` |
-| Gaze cursor doesn't move | Check `docker compose logs backend` — if you see `no surface data - check Surface Tracker setup!` repeatedly, AprilTags aren't visible to the world camera. Make sure the Surface Tracker plugin is enabled and all four markers have a green outline in Pupil Capture's World view |
+| Everything runs but the image never changes | No `OPENROUTER_API_KEY` is set, so generations return the original image. Check `curl localhost:8001/health` for `"api_configured": false`, add the key to `.env`, and restart the generation service |
+| "Model did not return an image" | Verify the chosen image model supports image output via OpenRouter; try `google/gemini-3.1-flash-image-preview` or `google/gemini-3-pro-image-preview` |
+| Gaze cursor doesn't move | Check `docker compose logs backend` — if you see `no gaze on surface 'screen' - check Surface Tracker setup and that the surface name matches PUPIL_SURFACE_NAME!` repeatedly, AprilTags aren't visible to the world camera or the surface has a different name. Make sure the Surface Tracker plugin is enabled, all four markers have a green outline in Pupil Capture's World view, and the surface name matches `PUPIL_SURFACE_NAME` |
 | Many blinks "don't trigger swaps" | Confirm Pupil Capture's **Blink Detector** plugin is enabled. The new backend log line ends with `\| blinks received this session: N` — if N stays at 0, blinks aren't reaching the backend at all |
 | `metadata.blink_count` stays 0 but blinks log on backend | The backend → generation relay is failing. Check `docker compose logs backend \| grep "blink relay"`; in docker-compose this requires `GENERATION_INTERNAL_URL=http://generation:8001` |
 | Frontend errors `Fetch API cannot load http://generation:8001` | Browser cached an old `/config` response. Hard-refresh (`Cmd+Shift+R`) every open tab; the public URL must be `http://localhost:8001`, not the docker service name |
