@@ -24,7 +24,12 @@ export class FixationTracker extends EventTarget {
   }
 
   reset() {
-    this.fixatedSector = null;
+    // Mark the current sector as already-consumed so a parked gaze cannot
+    // re-fire fixation events on the same sector after a swap. New fixations
+    // require the user to leave this sector and return to it (or land on
+    // another), at which point `sectorchange` clears `fixatedSector` again.
+    this.fixatedSector = this.current;
+    this.fixationStart = null;
   }
 
   get lastFixated() {
@@ -32,8 +37,14 @@ export class FixationTracker extends EventTarget {
   }
 
   update(gaze, smoothed, isStale) {
-    if (!gaze?.valid || isStale) {
+    if (isStale) {
       this.clear();
+      return;
+    }
+    if (!gaze?.valid) {
+      // Single dropped sample (likely a momentary eye-lost or blink heartbeat).
+      // Don't reset the fixation timer — `isStale` already covers truly lost
+      // gaze via the aggregate stale window.
       return;
     }
 

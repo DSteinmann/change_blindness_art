@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -12,15 +12,28 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .patch_manager import PatchManager
 from .pupil_source import PupilSource
 from .stream import StreamHub
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("aria-backend")
+logger = logging.getLogger("blinkart-backend")
 
 settings = get_settings()
-app = FastAPI(title="Aria Gaze Patch Backend", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    global _relay_client
+    logger.info("Starting backend...")
+    _relay_client = httpx.AsyncClient()
+    await pupil_source.start()
+    yield
+    logger.info("Stopping backend")
+    await pupil_source.stop()
+    await _relay_client.aclose()
+
+
+app = FastAPI(title="BlinkArt Backend", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -29,44 +42,37 @@ app.add_middleware(
     allow_credentials=True,
 )
 app.mount("/assets", StaticFiles(directory=str(settings.patch_dir)), name="assets")
+app.mount("/sessions", StaticFiles(directory=str(settings.sessions_dir)), name="sessions")
 
-stream_hub = StreamHub(history_size=settings.telemetry_history)
-patch_manager = PatchManager(settings.patch_dir)
-patch_usage_log: list[dict[str, Any]] = []
+stream_hub = StreamHub()
 
 _relay_client: httpx.AsyncClient | None = None
+
+
+_blink_relay_failures = 0
 
 
 async def _relay_blink_onset(state: str) -> None:
     """Fire-and-forget POST so the generation service can increment its
     per-session blink counter. Swallow failures — blink recording is telemetry,
-    not load-bearing."""
+    not load-bearing — but log loudly enough to diagnose misconfiguration."""
+    global _blink_relay_failures
     if _relay_client is None:
         return
     try:
-        await _relay_client.post(f"{settings.generation_api}/session/blink", timeout=2.0)
+        await _relay_client.post(
+            f"{settings.generation_internal_url}/session/blink", timeout=2.0,
+        )
     except Exception as exc:
-        logger.debug("blink relay failed: %s", exc)
+        _blink_relay_failures += 1
+        if _blink_relay_failures <= 3 or _blink_relay_failures % 50 == 0:
+            logger.warning(
+                "blink relay #%d to %s/session/blink failed: %s",
+                _blink_relay_failures, settings.generation_internal_url, exc,
+            )
 
 
 pupil_source = PupilSource(settings, stream_hub.broadcast, on_blink_onset=_relay_blink_onset)
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    global _relay_client
-    logger.info("Starting backend...")
-    _relay_client = httpx.AsyncClient()
-    await patch_manager.load()
-    await pupil_source.start()
-
-
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    logger.info("Stopping backend")
-    await pupil_source.stop()
-    if _relay_client is not None:
-        await _relay_client.aclose()
 
 
 @app.get("/config")
@@ -98,19 +104,27 @@ async def latest_sample() -> JSONResponse:
     return JSONResponse(stream_hub.latest_sample)
 
 
-@app.get("/patch/next")
-async def get_next_patch(stimulus: str | None = None) -> dict[str, Any]:
-    return await patch_manager.next_patch(stimulus)
+@app.post("/events/generation")
+async def relay_generation(event: dict[str, Any]) -> dict[str, Any]:
+    """Generation service pings us after each save so observer/feed pages
+    can react without polling."""
+    await stream_hub.broadcast({"event": "generation", **event})
+    return {"ok": True}
 
 
-@app.post("/patch/use")
-async def register_patch_use(event: dict[str, Any]) -> dict[str, Any]:
-    record = {
-        "ts": datetime.now(tz=timezone.utc).isoformat(),
-        "payload": event,
-    }
-    patch_usage_log.append(record)
-    return record
+@app.post("/events/swap")
+async def relay_swap(event: dict[str, Any]) -> dict[str, Any]:
+    """Main frontend pings us when a pending image is actually swapped in."""
+    await stream_hub.broadcast({"event": "swap", **event})
+    return {"ok": True}
+
+
+@app.post("/events/session_started")
+async def relay_session_started(event: dict[str, Any]) -> dict[str, Any]:
+    """Generation service pings us on participant rollover so observer+feed can
+    reset their local state."""
+    await stream_hub.broadcast({"event": "session_started", **event})
+    return {"ok": True}
 
 
 @app.websocket("/ws/stream")

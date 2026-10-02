@@ -1,10 +1,11 @@
-import { API_ROOT, WS_URL, loadRuntimeConfig } from "./config.js";
+import { API_ROOT, loadRuntimeConfig } from "./config.js";
 import { resizeCanvas } from "./rendering.js";
 import { GazeStream } from "./gaze.js";
 import { FixationTracker } from "./fixation.js";
 import { GenerationController } from "./generation.js";
+import { openStream } from "./ws.js";
 
-const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/a-single-banana-on-a-white-background-in-the-upp-p1-1765812893-00.png`;
+const DEFAULT_BASE_IMAGE = `${API_ROOT}/assets/generated/pexels-tbd-traveller-2149583744-30732757.jpg`;
 
 async function loadDefaultBaseImage(controller) {
   try {
@@ -26,26 +27,6 @@ async function loadDefaultBaseImage(controller) {
   }
 }
 
-function connectWebSocket(onSample, onBlink) {
-  const socket = new WebSocket(WS_URL);
-  let pingInterval = null;
-  socket.addEventListener("open", () => {
-    console.log("WebSocket connected");
-    pingInterval = setInterval(() => socket.readyState === 1 && socket.send("ping"), 10000);
-  });
-  socket.addEventListener("message", (event) => {
-    const data = JSON.parse(event.data);
-    if (data.event === "sample" && data.gaze) onSample(data.gaze);
-    else if (data.event === "blink" && data.state) onBlink(data.state);
-  });
-  socket.addEventListener("close", () => {
-    if (pingInterval !== null) clearInterval(pingInterval);
-    console.log("WebSocket disconnected, reconnecting...");
-    setTimeout(() => connectWebSocket(onSample, onBlink), 1000);
-  });
-  socket.addEventListener("error", () => socket.close());
-}
-
 async function main() {
   const config = await loadRuntimeConfig();
   const gaze = new GazeStream(config);
@@ -62,10 +43,28 @@ async function main() {
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();
 
-  connectWebSocket(
-    (g) => gaze.ingest(g),
-    (state) => controller.handleBlink(state),
-  );
+  openStream({
+    sample: (data) => data.gaze && gaze.ingest(data.gaze),
+    blink: (data) => data.state && controller.handleBlink(data.state),
+    session_started: async (data) => {
+      console.log("session_started → reloading default base image", data?.session_id);
+      controller.setSessionId(data?.session_id);
+      controller.resetForNewSession();
+      await loadDefaultBaseImage(controller);
+    },
+  });
+  // Fetch the active session id once on load so the first /generate request
+  // already carries a session_id and stale-tab writes can be rejected from
+  // the very first call.
+  try {
+    const r = await fetch(`${config.generation_api}/session/current`);
+    if (r.ok) {
+      const j = await r.json();
+      controller.setSessionId(j.session_id);
+    }
+  } catch (err) {
+    console.warn("Could not fetch current session id:", err);
+  }
   await loadDefaultBaseImage(controller);
 
   document.addEventListener("keydown", (event) => {

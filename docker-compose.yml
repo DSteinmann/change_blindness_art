@@ -1,17 +1,25 @@
-version: "3.9"
-
 services:
   backend:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
-    container_name: aria-backend
+    container_name: blinkart-backend
+    # Same .env as the generation service, so PUPIL_SURFACE_NAME, fixation
+    # and gaze settings reach the backend too.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PATCH_ASSETS_DIR=/app/assets/patches
       # The following are needed for the backend to connect to Pupil Core
       # running on the host machine.
       - PUPIL_HOST=host.docker.internal
       - PUPIL_REMOTE_PORT=50020
+      # Reach the generation service by its compose service name for
+      # server-to-server calls (the blink relay). Browser-facing requests
+      # still use GENERATION_API (defaults to localhost:8001), which the
+      # backend exposes via /config.
+      - GENERATION_INTERNAL_URL=http://generation:8001
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -21,15 +29,16 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - aria-net
+      - blinkart-net
 
   generation:
     build:
       context: .
       dockerfile: docker/generation.Dockerfile
-    container_name: aria-generation
+    container_name: blinkart-generation
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
     volumes:
@@ -38,20 +47,20 @@ services:
     ports:
       - "8001:8001"
     networks:
-      - aria-net
+      - blinkart-net
 
   frontend:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
-    container_name: aria-frontend
+    container_name: blinkart-frontend
     depends_on:
       - backend
     ports:
       - "8080:8080"
     networks:
-      - aria-net
+      - blinkart-net
 
 networks:
-  aria-net:
+  blinkart-net:
     driver: bridge

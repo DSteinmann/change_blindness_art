@@ -1,4 +1,9 @@
-import os
+"""Regenerate the four AprilTag corner markers shown by the participant view.
+
+The markers are already committed under frontend/public/assets/markers/; only
+run this to change their size. Requires extra packages:
+    pip install pupil-labs-realtime-screen-gaze opencv-python
+"""
 from pathlib import Path
 from pupil_labs.real_time_screen_gaze import marker_generator
 import cv2

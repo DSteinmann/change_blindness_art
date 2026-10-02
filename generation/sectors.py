@@ -4,7 +4,12 @@ from __future__ import annotations
 import base64
 import io
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
+
+# Aspect ratios accepted by the OpenRouter image-config knob. We pick the
+# closest match to the input image so the model output keeps the input's
+# proportions; otherwise sector compositing maps the wrong pixels.
+SUPPORTED_ASPECTS: tuple[str, ...] = ("1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3")
 
 
 def sector_name(row: int, col: int) -> str:
@@ -61,3 +66,74 @@ def decode_base64_image(base64_str: str) -> Image.Image:
     if "," in base64_str:
         base64_str = base64_str.split(",", 1)[1]
     return Image.open(io.BytesIO(base64.b64decode(base64_str))).convert("RGB")
+
+
+def _aspect_value(label: str) -> float:
+    w, h = label.split(":")
+    return int(w) / int(h)
+
+
+def infer_aspect_ratio(width: int, height: int) -> str:
+    """Snap an arbitrary image's aspect ratio to the closest supported label."""
+    target = width / height
+    return min(SUPPORTED_ASPECTS, key=lambda s: abs(_aspect_value(s) - target))
+
+
+def composite_sector(
+    base: Image.Image,
+    edit: Image.Image,
+    region: tuple[int, int, int, int],
+    feather: int = 8,
+) -> Image.Image:
+    """Paste only the target sector of `edit` onto a copy of `base`.
+
+    Foundation image models re-render the entire canvas even when asked to
+    modify a single region, so using the model's full output as the next state
+    introduces compounding drift. By taking only the target sector and pasting
+    it onto the previous state, non-target pixels stay byte-identical across
+    iterations.
+
+    `feather` (px) softens the patch border with an alpha ramp, hiding the
+    inevitable tone/exposure mismatch between the model's output and the base.
+    Pass `feather=0` for hard-edge compositing (mostly useful in tests).
+    """
+    sx1, sy1, sx2, sy2 = region
+    bw, bh = base.size
+    ew, eh = edit.size
+    mx1 = sx1 * ew // bw
+    my1 = sy1 * eh // bh
+    mx2 = sx2 * ew // bw
+    my2 = sy2 * eh // bh
+    pw, ph = sx2 - sx1, sy2 - sy1
+    patch = edit.crop((mx1, my1, mx2, my2)).resize((pw, ph), Image.LANCZOS)
+
+    out = base.copy()
+    if feather <= 0:
+        out.paste(patch, (sx1, sy1))
+        return out
+
+    # Cap feather to a third of the smaller dimension so the inner mask still
+    # has area; otherwise tiny patches turn fully transparent.
+    f = max(1, min(feather, min(pw, ph) // 3))
+    mask = Image.new("L", (pw, ph), 0)
+    ImageDraw.Draw(mask).rectangle((f, f, pw - f, ph - f), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(f))
+    out.paste(patch, (sx1, sy1), mask=mask)
+    return out
+
+
+def shrink_for_api(img: Image.Image, max_edge: int = 1024) -> str:
+    """Downscale + PNG-encode a PIL image as a data URL, bounding payload size.
+
+    OpenRouter rejects requests where the combined image content exceeds ~30MB.
+    Semantic mode sends two images per call, so each one needs to fit comfortably
+    within ~12MB. 1024 px is also the native generation resolution for current
+    foundation image models — pixels above that get downsampled internally
+    before generation, so we don't gain quality by sending more.
+    """
+    work = img.copy()
+    if max(work.size) > max_edge:
+        work.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    buf = io.BytesIO()
+    work.convert("RGB").save(buf, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()

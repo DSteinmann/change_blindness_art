@@ -7,8 +7,6 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, List
 from PIL import Image
-import io
-import base64
 
 
 class SessionManager:
@@ -33,7 +31,13 @@ class SessionManager:
         which makes replays reproducible even if the code or env changes.
         """
         if session_id is None:
-            session_id = f"session_{int(time.time())}"
+            base = f"session_{int(time.time())}"
+            session_id, n = base, 1
+            # Two rotations in the same second would otherwise overwrite the
+            # first session's metadata and images.
+            while (self.sessions_dir / session_id).exists():
+                session_id = f"{base}_{n}"
+                n += 1
 
         self.current_session_id = session_id
         self.current_session_dir = self.sessions_dir / session_id
@@ -47,6 +51,7 @@ class SessionManager:
             "runtime": runtime or {},
             "stats": {"blink_count": 0, "frame_drops": 0},
             "calibration": None,
+            "edit_history": [],
             "sequence": [],
         }
 
@@ -67,6 +72,36 @@ class SessionManager:
         self.metadata["calibration"] = calibration
         self._save_metadata()
 
+    def recent_captions(self) -> list:
+        """Sliding window of recent edit captions for the active session.
+        Used by the fal planner so it can diverge from what's already there."""
+        return list(self.metadata.get("edit_history", []))
+
+    def update_caption(
+        self,
+        session_id: str,
+        index: int,
+        caption: str,
+        duplicate: bool = False,
+    ) -> bool:
+        """Late-update an entry's caption (and edit_history) for an in-flight
+        async captioner. Returns True iff applied. Skipped when the session
+        rotated under us or the index is no longer valid."""
+        if self.current_session_id != session_id:
+            return False
+        sequence = self.metadata.get("sequence", [])
+        if index < 0 or index >= len(sequence):
+            return False
+        sequence[index]["caption"] = caption
+        if duplicate:
+            sequence[index]["duplicate_caption"] = True
+        history = self.metadata.setdefault("edit_history", [])
+        history.append(caption)
+        if len(history) > 5:
+            del history[: len(history) - 5]
+        self._save_metadata()
+        return True
+
     def save_generation(
         self,
         image: Image.Image,
@@ -74,6 +109,9 @@ class SessionManager:
         prompt: str,
         focus_sector: str,
         latency_ms: Optional[float] = None,
+        caption: Optional[str] = None,
+        duplicate_caption: bool = False,
+        generator: Optional[str] = None,
     ) -> Dict:
         """Save a generated image and its metadata."""
         if not self.current_session_dir:
@@ -89,11 +127,20 @@ class SessionManager:
             "target_sector": sector_name,
             "focus_sector": focus_sector,
             "prompt": prompt,
+            "caption": caption,
             "timestamp": time.time(),
             "latency_ms": latency_ms,
+            "generator": generator,
         }
+        if duplicate_caption:
+            entry["duplicate_caption"] = True
 
         self.metadata["sequence"].append(entry)
+        if caption:
+            history = self.metadata.setdefault("edit_history", [])
+            history.append(caption)
+            if len(history) > 5:
+                del history[: len(history) - 5]
         self._save_metadata()
 
         lat = f", {latency_ms:.0f}ms" if latency_ms is not None else ""

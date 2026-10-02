@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 from typing import Any
 
 from fastapi import WebSocket
@@ -13,10 +12,9 @@ logger = logging.getLogger(__name__)
 class StreamHub:
     """Fan-out hub that keeps track of websocket clients and latest telemetry."""
 
-    def __init__(self, history_size: int = 512) -> None:
+    def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
         self.latest_sample: dict[str, Any] | None = None
-        self.history: deque[dict[str, Any]] = deque(maxlen=history_size)
         self._lock = asyncio.Lock()
 
     async def register(self, websocket: WebSocket) -> None:
@@ -31,7 +29,6 @@ class StreamHub:
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
         self.latest_sample = payload
-        self.history.append(payload)
         dead_clients: list[WebSocket] = []
         for client in list(self.clients):
             try:

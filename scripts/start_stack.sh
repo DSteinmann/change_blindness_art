@@ -11,10 +11,18 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
 fi
 export PYTHONUNBUFFERED=1
 BACKEND_PORT=8000
+GENERATION_PORT=8001
 FRONTEND_PORT=8080
+
+# Load API keys and generation settings (same file docker compose uses).
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
 export PUPIL_HOST="${PUPIL_REMOTE_HOST:-127.0.0.1}"
 export PUPIL_REMOTE_PORT="${PUPIL_REMOTE_PORT:-50020}"
-export PUPIL_TOPIC="${PUPIL_TOPIC:-gaze.}"
 export PUPIL_CONFIDENCE_THRESHOLD="${PUPIL_CONFIDENCE_THRESHOLD:-0.6}"
 
 usage() {
@@ -24,9 +32,9 @@ Usage: scripts/start_stack.sh [options]
 Options:
   --pupil-host <host>       Pupil Remote host (default: 127.0.0.1)
   --pupil-port <port>       Pupil Remote command port (default: 50020)
-  --pupil-topic <topic>     Pupil gaze topic (default: gaze.)
   --pupil-confidence <val>  Confidence threshold for valid gaze (default: 0.6)
   --backend-port <port>     Backend HTTP port (default: 8000)
+  --generation-port <port>  Generation service HTTP port (default: 8001)
   --frontend-port <port>    Frontend HTTP port (default: 8080)
   --help                    Show this help message
 
@@ -34,11 +42,13 @@ Environment:
   PYTHON_BIN                  Interpreter that has backend deps installed (default: python3)
   PUPIL_REMOTE_HOST           Used as fallback for --pupil-host
   PUPIL_REMOTE_PORT         Used as fallback for --pupil-port
-  PUPIL_TOPIC                 Used as fallback for --pupil-topic
   PUPIL_CONFIDENCE_THRESHOLD  Used as fallback for --pupil-confidence
 
-The script runs the backend (uvicorn) and static frontend server locally.
-Press Ctrl+C to stop all services.
+Settings from .env in the repo root (e.g. OPENROUTER_API_KEY) are loaded
+automatically.
+
+The script runs the backend, the generation service, and the static frontend
+server locally. Press Ctrl+C to stop all services.
 EOF
 }
 
@@ -56,16 +66,16 @@ while [[ $# -gt 0 ]]; do
       export PUPIL_REMOTE_PORT="$2"
       shift 2
       ;;
-    --pupil-topic)
-      export PUPIL_TOPIC="$2"
-      shift 2
-      ;;
     --pupil-confidence)
       export PUPIL_CONFIDENCE_THRESHOLD="$2"
       shift 2
       ;;
     --backend-port)
       BACKEND_PORT="$2"
+      shift 2
+      ;;
+    --generation-port)
+      GENERATION_PORT="$2"
       shift 2
       ;;
     --frontend-port)
@@ -108,8 +118,16 @@ cleanup() {
 
 trap cleanup INT TERM
 
+export SESSIONS_ASSETS_DIR="$ROOT_DIR/assets/sessions"
+export GENERATION_API="http://localhost:$GENERATION_PORT"
+export GENERATION_INTERNAL_URL="http://127.0.0.1:$GENERATION_PORT"
+export BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
+
 log "Starting backend on port $BACKEND_PORT"
 spawn "backend" bash -c "cd '$ROOT_DIR/backend' && PATCH_ASSETS_DIR='$ROOT_DIR/assets/patches' '$PYTHON_BIN' -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT"
+
+log "Starting generation service on port $GENERATION_PORT"
+spawn "generation" bash -c "cd '$ROOT_DIR/generation' && '$PYTHON_BIN' server.py --host 127.0.0.1 --port $GENERATION_PORT"
 
 log "Starting frontend on port $FRONTEND_PORT"
 spawn "frontend" bash -c "cd '$ROOT_DIR/frontend/public' && '$PYTHON_BIN' -m http.server $FRONTEND_PORT"

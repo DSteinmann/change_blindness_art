@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "BlinkArt"
+abstract: "A system that swaps AI-generated peripheral modifications into displayed images precisely during natural blinks, for change blindness research and gaze-reactive art installations."
+authors:
+  - family-names: Steinmann
+    given-names: Dominik
+    orcid: "https://orcid.org/0009-0007-5093-1830"
+repository-code: "https://github.com/DSteinmann/change_blindness_art"
+license: MIT
+date-released: 2026-09-29
+preferred-citation:
+  type: conference-paper
+  title: "BlinkArt: Using Change Blindness For AI-Generated Image Modifications in Artworks"
+  authors:
+    - family-names: Steinmann
+      given-names: Dominik
+      orcid: "https://orcid.org/0009-0007-5093-1830"
+    - family-names: Strecker-Bischoff
+      given-names: Jannis
+      orcid: "https://orcid.org/0000-0001-7607-8064"
+    - family-names: Bektaş
+      given-names: Kenan
+      orcid: "https://orcid.org/0000-0003-2937-0542"
+    - family-names: Williams
+      given-names: Jessica Laraine
+      orcid: "https://orcid.org/0000-0002-0999-6196"
+    - family-names: Mayer
+      given-names: Simon
+      orcid: "https://orcid.org/0000-0001-6367-3454"
+  collection-title: "Companion of the 2026 ACM International Joint Conference on Pervasive and Ubiquitous Computing (UbiComp Companion '26)"
+  conference:
+    name: "UbiComp Companion '26"
+    city: "Shanghai"
+    country: "CN"
+    date-start: 2026-10-11
+    date-end: 2026-10-15
+  publisher:
+    name: "ACM"
+  doi: "10.1145/3798063.3837172"
+  year: 2026
